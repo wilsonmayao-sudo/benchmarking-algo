@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Environment and Secret Files
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.cert
+*.pfx
+*.p12
+credentials.json
+secrets.json
+
+# OS Metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs & Temporary Files
+*.log
+npm-debug.log*
+.cache/
+tmp/
+temp/

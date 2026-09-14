@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pathfinding Benchmark &middot; Solid Waste Collection</title>
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-title">
+    <h1>Pathfinding Benchmark</h1>
+    <p>Custom algorithm vs. standard A* on identical road networks, traffic, topography and closures.</p>
+  </div>
+  <span class="pill" id="status">Ready</span>
+</header>
+
+<main class="layout">
+
+  <!-- ---------------------------------------------------------------- -->
+  <!-- Control panel                                                     -->
+  <!-- ---------------------------------------------------------------- -->
+  <aside class="panel">
+
+    <section class="group">
+      <h2>Test scenario</h2>
+      <select id="scenarioSelect"></select>
+      <p class="hint" id="scenarioDesc"></p>
+      <button id="applyScenario" class="ghost" type="button">Apply scenario</button>
+    </section>
+
+    <section class="group">
+      <h2>City map</h2>
+
+      <!-- The real <input type="file"> covers the whole zone, so clicking anywhere opens
+           the OS picker natively (no label indirection) and dropping a file onto it works
+           too. No `accept` filter: a restrictive list hides files whose extension we did
+           not guess, which is a very confusing failure. -->
+      <div class="dropzone" id="mapDropzone">
+        <input id="mapFile" type="file" multiple aria-label="City map files" />
+        <span class="dropzone-icon" aria-hidden="true">&#8679;</span>
+        <span class="dropzone-text"><strong>Choose file(s)</strong> or drag them here</span>
+        <span id="mapFileLabel" class="file-name">no file chosen</span>
+      </div>
+
+      <div class="path-row">
+        <input id="mapPath" type="text" spellcheck="false"
+               placeholder="or type a path: data/mycity.geojson" />
+        <button id="mapPathLoad" class="ghost small" type="button">Load</button>
+      </div>
+
+      <div id="mapFolder" class="folder-list" hidden></div>
+
+      <p class="hint" id="mapStatus">
+        Load your own road network: <strong>GeoJSON</strong> (LineStrings),
+        <strong>Overpass / OSM JSON</strong>, or <strong>CSV</strong> — either one edge list
+        with coordinates, or a node table plus an edge table. Two files at once
+        (nodes + edges) are supported. See <code>data/sample-city.geojson</code>.
+      </p>
+    </section>
+
+    <section class="group">
+      <h2>Custom scenario</h2>
+      <div class="grid2">
+        <label class="field">
+          <span>Network type</span>
+          <select id="cNetType">
+            <option value="grid">Grid (city blocks)</option>
+            <option value="random">Random (irregular)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Nodes</span>
+          <input id="cNodes" type="number" min="100" max="20000" step="100" value="4000" />
+        </label>
+        <label class="field">
+          <span>Elevation (m)</span>
+          <input id="cElev" type="number" min="0" max="400" step="5" value="60" />
+        </label>
+        <label class="field">
+          <span>Traffic (% congested)</span>
+          <input id="cTraffic" type="number" min="0" max="100" step="5" value="40" />
+        </label>
+        <label class="field">
+          <span>Closed roads</span>
+          <input id="cClosures" type="number" min="0" max="1000" step="5" value="25" />
+        </label>
+        <label class="field">
+          <span>Seed</span>
+          <input id="cSeed" type="number" min="1" max="99999999" step="1" value="20260913" />
+        </label>
+      </div>
+      <p class="hint" id="customNetworkNote" hidden></p>
+      <button id="applyCustom" class="ghost" type="button">Apply custom scenario</button>
+    </section>
+
+    <section class="group">
+      <h2>Benchmark settings</h2>
+      <label class="field field-block">
+        <span>Route mode</span>
+        <select id="routeMode">
+          <option value="trip">Single trip &mdash; origin to destination</option>
+          <option value="round">Collection round &mdash; depot + pickup points</option>
+        </select>
+      </label>
+      <div class="grid2">
+        <label class="field">
+          <span>Repeats</span>
+          <input id="repeats" type="number" min="1" max="200" step="1" value="7" />
+        </label>
+        <label class="field">
+          <span>Warm-up runs</span>
+          <input id="warmup" type="number" min="0" max="20" step="1" value="3" />
+        </label>
+        <label class="field" id="stopCountField" hidden>
+          <span>Pickup points</span>
+          <input id="stopCount" type="number" min="2" max="80" step="1" value="12" />
+        </label>
+      </div>
+      <p class="hint" id="routeModeNote" hidden>
+        The truck leaves the depot, visits every pickup point in one sector sweep, and returns.
+        Every algorithm gets the same depot, the same stops and the same order, so this
+        measures pathfinding, not tour planning. Preprocessing is paid once for the whole round.
+      </p>
+      <button id="runBtn" class="primary">Run benchmark</button>
+      <div class="progress" aria-hidden="true"><div id="progressBar"></div></div>
+      <p class="hint" id="progressLabel">Idle</p>
+    </section>
+
+    <!-- Filled from each algorithm's `tunables` declaration; hidden when none exist. -->
+    <section class="group" id="algoSettingsGroup" hidden>
+      <h2>Algorithm settings</h2>
+      <div id="algoTunables"></div>
+    </section>
+
+    <section class="group">
+      <h2>Cost model weights</h2>
+      <div class="grid2">
+        <label class="field">
+          <span>Traffic&nbsp;/&nbsp;time</span>
+          <input id="wTime" type="number" step="0.1" value="1" />
+        </label>
+        <label class="field">
+          <span>Distance</span>
+          <input id="wDistance" type="number" step="0.01" value="0" />
+        </label>
+        <label class="field">
+          <span>Climb (&uarr;m)</span>
+          <input id="wClimb" type="number" step="0.1" value="0.5" />
+        </label>
+        <label class="field">
+          <span>Descent (&darr;m)</span>
+          <input id="wDescent" type="number" step="0.01" value="0.15" />
+        </label>
+      </div>
+      <p class="hint">Identical weights are applied to both algorithms.</p>
+      <button id="applyWeights" class="ghost" type="button">Apply weights</button>
+    </section>
+
+  </aside>
+
+  <!-- ---------------------------------------------------------------- -->
+  <!-- Visualization stage                                               -->
+  <!-- ---------------------------------------------------------------- -->
+  <section class="stage">
+
+    <div class="stage-toolbar">
+      <label class="field inline">
+        <span>View</span>
+        <select id="viewMode">
+          <option value="overlay">Overlay &mdash; both algorithms</option>
+          <option value="custom">Custom algorithm only</option>
+          <option value="astar">A* only</option>
+          <option value="side">Side by side</option>
+        </select>
+      </label>
+
+      <label class="check"><input type="checkbox" id="optExplored" checked /> Expanded nodes</label>
+      <label class="check"><input type="checkbox" id="optClosed" checked /> Closures</label>
+      <label class="check"><input type="checkbox" id="optTraffic" checked /> Traffic</label>
+      <label class="check"><input type="checkbox" id="optElev" checked /> Elevation</label>
+
+      <button id="viewReset" class="small" type="button"
+              title="Scroll to zoom, drag to pan, double-click a canvas to reset">Reset view</button>
+      <span class="hint">scroll = zoom &middot; drag = pan</span>
+
+      <span class="hint" id="caseSummary"></span>
+    </div>
+
+    <!-- Slow-motion replay of the traversal traces. Animating never re-runs the
+         algorithms, so it cannot affect the measured numbers. -->
+    <div class="playback" id="playback">
+      <button id="playBtn" class="small" type="button" disabled>&#9654; Play</button>
+      <label class="field inline">
+        <span>Speed</span>
+        <select id="playSpeed">
+          <option value="25">Slow-mo &middot; 25 nodes/s</option>
+          <option value="75">Slow &middot; 75 nodes/s</option>
+          <option value="200" selected>Normal &middot; 200 nodes/s</option>
+          <option value="600">Fast &middot; 600 nodes/s</option>
+          <option value="2000">Very fast &middot; 2 000 nodes/s</option>
+          <option value="8000">Instant &middot; 8 000 nodes/s</option>
+        </select>
+      </label>
+      <input id="playScrub" type="range" min="0" max="1000" value="1000"
+             aria-label="Playback position" disabled />
+      <span class="hint" id="playLabel">Run the benchmark to replay it</span>
+    </div>
+
+    <div class="views mode-overlay" id="views">
+      <div class="view-card" id="viewOverlay">
+        <canvas id="canvasOverlay"></canvas>
+        <div class="badge">Both algorithms (overlay)</div>
+      </div>
+      <div class="view-card" id="viewCustom">
+        <canvas id="canvasCustom"></canvas>
+        <div class="badge" id="badgeCustom">Custom algorithm</div>
+      </div>
+      <div class="view-card" id="viewAstar">
+        <canvas id="canvasAstar"></canvas>
+        <div class="badge" id="badgeAstar">A* (baseline)</div>
+      </div>
+    </div>
+
+    <div class="legend" id="legend"></div>
+  </section>
+</main>
+
+<!-- ---------------------------------------------------------------- -->
+<!-- Results                                                           -->
+<!-- ---------------------------------------------------------------- -->
+<section class="results-wrap">
+  <h2>Benchmark results</h2>
+  <div id="verdict" class="verdict"></div>
+
+  <h3 class="section-title">Aggregate</h3>
+  <div class="table-scroll"><table id="resultsTable"></table></div>
+
+  <h3 class="section-title">Compared with standard A*</h3>
+  <div class="table-scroll"><table id="comparisonTable"></table></div>
+
+  <details id="runDetails">
+    <summary>Per-run detail</summary>
+    <div class="table-scroll"><table id="runsTable"></table></div>
+  </details>
+</section>
+
+<footer class="app-footer">
+  <p>
+    Both algorithms receive the <strong>same frozen road network</strong>, start, destination, traffic
+    factors, elevation profile and road closures. All timing is measured in-browser with
+    <code>performance.now()</code> around the search call only.
+  </p>
+</footer>
+
+<!-- Shown while a file is dragged anywhere over the window -->
+<div class="drop-overlay" aria-hidden="true">Drop your road-network file to load it</div>
+
+<!-- Shown only when the page is opened straight from disk (ES modules need http://) -->
+<div id="fileProtocolWarning" class="overlay" hidden>
+  <div class="overlay-card">
+    <h2>Serve this folder over HTTP</h2>
+    <p>
+      This app uses ES modules, which browsers refuse to load from a <code>file://</code> URL.
+      Run a static server inside the project folder and open the printed address:
+    </p>
+    <pre><code>python -m http.server 8000</code></pre>
+    <p>then open <code>http://localhost:8000</code>.</p>
+    <p class="hint">Any static server works (VS Code Live Server, <code>npx serve</code>, XAMPP, IIS&hellip;).</p>
+  </div>
+</div>
+
+<!-- Classic (non-module) script: runs even when the page is opened from disk, so the
+     warning below can appear when the ES module never gets a chance to load. -->
+<script>
+  if (location.protocol === 'file:') {
+    document.getElementById('fileProtocolWarning').hidden = false;
+  }
+</script>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "pathfinding-benchmark",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-based benchmark comparing a custom pathfinding algorithm with standard A* on solid-waste-collection road networks.",
+  "scripts": {
+    "start": "python -m http.server 8000",
+    "serve": "python -m http.server 8000",
+    "selfcheck": "node tools/selfcheck.mjs",
+    "checkrefs": "node tools/checkrefs.mjs",
+    "compare": "node tools/compare.mjs",
+    "check": "node tools/checkrefs.mjs && node tools/selfcheck.mjs"
+  }
+}
