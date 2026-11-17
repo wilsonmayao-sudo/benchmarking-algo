@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fleet Simulation &middot; Solid Waste Collection</title>
+<link rel="stylesheet" href="css/styles.css" />
+<link rel="stylesheet" href="css/fleet.css" />
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-title">
+    <h1>Fleet Simulation</h1>
+    <p>Garbage trucks on a live road network: road events, A* rerouting, ETAs, capacity handoffs.
+       <a href="index.html" class="nav-link">&larr; Pathfinding benchmark</a></p>
+  </div>
+  <span class="clock" id="simClock">00:00:00</span>
+  <span class="pill" id="fleetStatus">Loading&hellip;</span>
+</header>
+
+<main class="layout">
+
+  <!-- ---------------------------------------------------------------- -->
+  <!-- Control panel                                                     -->
+  <!-- ---------------------------------------------------------------- -->
+  <aside class="panel">
+
+    <section class="group">
+      <h2>Scenario</h2>
+      <div class="path-row">
+        <input id="scenarioPath" type="text" spellcheck="false" value="data/scenarios/sample-fleet.json" />
+        <button id="scenarioLoad" class="small" type="button">Load</button>
+      </div>
+      <div class="dropzone small-zone">
+        <input id="scenarioFile" type="file" accept=".json,application/json" aria-label="Scenario config file" />
+        <span class="dropzone-text"><strong>Choose a config</strong> or drop a .json here</span>
+      </div>
+      <p class="hint" id="scenarioInfo"></p>
+    </section>
+
+    <section class="group">
+      <h2>Variant</h2>
+      <label class="check"><input type="checkbox" id="optEvents" checked /> Road events</label>
+      <label class="check"><input type="checkbox" id="optRandom" checked /> Random events</label>
+      <label class="field field-inline-top">
+        <span>Trucks used</span>
+        <select id="optTrucks"></select>
+      </label>
+      <p class="hint">Changing the variant resets the run. Each finished run is added to the comparison table below.</p>
+    </section>
+
+    <section class="group">
+      <h2>Playback</h2>
+      <div class="btn-row">
+        <button id="btnPlay" type="button" class="primary-inline">&#9654; Play</button>
+        <button id="btnStep" type="button">Step 10 s</button>
+        <button id="btnReset" type="button">Reset</button>
+      </div>
+      <label class="field field-inline-top">
+        <span>Speed (simulated seconds per real second)</span>
+        <select id="optSpeed">
+          <option value="5">5&times;</option>
+          <option value="15">15&times;</option>
+          <option value="30" selected>30&times;</option>
+          <option value="60">60&times;</option>
+          <option value="180">180&times;</option>
+        </select>
+      </label>
+      <button id="btnRunToEnd" type="button" class="ghost">Run to end instantly</button>
+    </section>
+
+    <section class="group">
+      <h2>Trucks &amp; ETA</h2>
+      <div id="truckList" class="truck-list"></div>
+    </section>
+
+    <section class="group">
+      <h2>Export</h2>
+      <div class="btn-row">
+        <button id="btnExportJson" type="button" disabled>Run JSON</button>
+        <button id="btnExportCsv" type="button" disabled>Runs CSV</button>
+      </div>
+      <p class="hint">JSON = everything about the current run (metrics, per-truck, per-bin, event log).
+        CSV = one row per finished run in this session, for comparing scenarios.
+        Headless: <code>npm run fleet</code> / <code>npm run fleet:compare</code>.</p>
+    </section>
+  </aside>
+
+  <!-- ---------------------------------------------------------------- -->
+  <!-- Map                                                               -->
+  <!-- ---------------------------------------------------------------- -->
+  <section class="stage">
+    <div class="stage-toolbar">
+      <label class="check"><input type="checkbox" id="optPaths" checked /> Planned paths</label>
+      <label class="check"><input type="checkbox" id="optEtaLabels" checked /> ETA labels</label>
+      <label class="check"><input type="checkbox" id="optBinLabels" checked /> Bin labels</label>
+      <label class="check"><input type="checkbox" id="optNodeIds" /> Node ids</label>
+      <button id="mapReset" class="small" type="button">Reset view</button>
+      <span class="hint">scroll = zoom &middot; drag = pan</span>
+    </div>
+    <div class="view-card map-card">
+      <canvas id="fleetCanvas"></canvas>
+    </div>
+    <div class="legend" id="fleetLegend"></div>
+  </section>
+</main>
+
+<!-- ---------------------------------------------------------------- -->
+<!-- Log + metrics                                                     -->
+<!-- ---------------------------------------------------------------- -->
+<section class="results-wrap fleet-results">
+  <div class="fleet-grid">
+    <div>
+      <h3 class="section-title">Run log
+        <select id="logFilter" class="inline-select">
+          <option value="all">everything</option>
+          <option value="important" selected>events, handoffs &amp; warnings</option>
+          <option value="event">road events only</option>
+        </select>
+      </h3>
+      <div id="logList" class="log-list"></div>
+    </div>
+    <div>
+      <h3 class="section-title">Benchmark metrics (this run)</h3>
+      <div class="table-scroll"><table id="metricsTable"></table></div>
+    </div>
+  </div>
+
+  <h3 class="section-title">Per truck</h3>
+  <div class="table-scroll"><table id="truckTable"></table></div>
+
+  <h3 class="section-title">Road event log</h3>
+  <div class="table-scroll"><table id="eventTable"></table></div>
+
+  <h3 class="section-title">Finished runs (compare scenarios / variants)</h3>
+  <div class="table-scroll"><table id="runsCompareTable"></table></div>
+</section>
+
+<div id="fileProtocolWarning" class="overlay" hidden>
+  <div class="overlay-card">
+    <h2>Serve this folder over HTTP</h2>
+    <p>ES modules cannot load from <code>file://</code>. Run <code>npm start</code> (or
+      <code>python -m http.server 8000</code>) and open <code>http://localhost:8000/fleet.html</code>.</p>
+  </div>
+</div>
+<script>
+  if (location.protocol === 'file:') document.getElementById('fileProtocolWarning').hidden = false;
+</script>
+<script type="module" src="js/fleetui/fleetMain.js"></script>
+</body>
+</html>

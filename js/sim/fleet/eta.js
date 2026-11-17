@@ -1,0 +1,132 @@
+/**
+ * ETA calculation.
+ *
+ *   ETA to next stop  = time left in the current service/unload
+ *                     + remaining A* path cost of the current leg / truck speed
+ *
+ *   ETA to route end  = ETA to next stop
+ *                     + service time at that bin
+ *                     + Σ over the remaining queue (in the order the truck will visit):
+ *                         A* leg cost / speed + bin service time
+ *                     + final legs: → disposal (+ unload time) if carrying load, → depot
+ *
+ * Path cost is in "effective metres" (length × delay multiplier), so cost / speed is
+ * seconds. The look-ahead respects capacity exactly as the truck will: if the next bin
+ * would overflow, the projected route goes to the disposal site at that point (the rest
+ * would be handed off).
+ *
+ * ETAs are stored as ABSOLUTE simulation times (nextAt / endAt), so the UI can count
+ * them down every frame without recomputing; they are recomputed whenever a path
+ * changes (reroute, closure, delay, new assignment) — see Simulation.refreshEta().
+ */
+
+import { busyRemaining, remainingRouteTime } from './truck.js';
+
+/**
+ * Order in which a truck will visit its queue, starting from node `from`.
+ * Must match Simulation.pickNextBin() so the projection is what the truck really does.
+ */
+export function plannedOrder(graph, queue, binsById, from, visitOrder) {
+  if (visitOrder === 'given') return queue.slice();
+  const left = queue.slice();
+  const order = [];
+  let cur = from;
+  while (left.length > 0) {
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < left.length; i++) {
+      const n = binsById.get(left[i]).node;
+      const d = (graph.x[n] - graph.x[cur]) ** 2 + (graph.y[n] - graph.y[cur]) ** 2;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    const id = left.splice(best, 1)[0];
+    order.push(id);
+    cur = binsById.get(id).node;
+  }
+  return order;
+}
+
+/**
+ * @param {object} sim  the Simulation (graph, road, router, binsById, world settings)
+ * @param {object} truck
+ * @returns {{nextAt:number, endAt:number, label:string, targetName:string, computedAt:number}|null}
+ */
+export function computeEta(sim, truck) {
+  const { graph, road, router, binsById, world } = sim;
+  const now = sim.time;
+  const s = world.settings;
+
+  if (truck.status === 'blocked') {
+    return { nextAt: Infinity, endAt: Infinity, label: 'BLOCKED — no route', targetName: '', computedAt: now };
+  }
+  if (truck.status === 'idle' || !truck.target) {
+    return { nextAt: now, endAt: now, label: 'idle at depot', targetName: '', computedAt: now };
+  }
+
+  // ---- current leg ----
+  let t = now + busyRemaining(truck, now);
+  if (truck.status === 'driving') t += remainingRouteTime(graph, road, truck);
+  const target = truck.target;
+  const nextAt = t;
+  const targetName = target.kind === 'bin' ? binsById.get(target.binId).name
+    : target.kind === 'disposal' ? 'Disposal' : 'Depot';
+
+  // ---- look-ahead to the end of the route ----
+  let end = nextAt;
+  let load = truck.load;
+  let at = target.node;
+  const legTime = (from, to) => (from === to ? 0 : router.legCost(from, to, 'eta') / truck.speed);
+
+  if (target.kind === 'bin') {
+    const bin = binsById.get(target.binId);
+    // the truck is already committed to the target bin (it was checked to fit)
+    if (truck.status !== 'servicing') end += bin.serviceTime;
+    load += bin.load;
+    const rest = truck.queue.filter((id) => id !== target.binId);
+    for (const id of plannedOrder(graph, rest, binsById, at, s.visit_order)) {
+      const b = binsById.get(id);
+      if (load + b.load > truck.maxCapacity) break; // will be handed off at this point
+      end += legTime(at, b.node) + b.serviceTime;
+      load += b.load;
+      at = b.node;
+    }
+  } else if (target.kind === 'disposal') {
+    end += truck.status === 'unloading' ? 0 : s.unload_time_s;
+    load = 0;
+  }
+
+  // final trip: unload if carrying anything, then back to the depot
+  if (target.kind !== 'disposal' && load > 0) {
+    end += legTime(at, world.disposal) + s.unload_time_s;
+    at = world.disposal;
+  }
+  if (s.return_to_depot && target.kind !== 'depot') end += legTime(at, world.depot);
+
+  return {
+    nextAt,
+    endAt: end,
+    targetName,
+    label: `${truck.name} → ${targetName}`,
+    computedAt: now,
+  };
+}
+
+/** "4 min 30 s" style duration (the format asked for in the UI). */
+export function fmtDuration(seconds) {
+  if (seconds === Infinity) return 'unreachable';
+  if (!Number.isFinite(seconds)) return '—';
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  if (h > 0) return `${h} h ${m} min`;
+  if (m > 0) return `${m} min ${r} s`;
+  return `${r} s`;
+}
+
+/** Simulation clock as hh:mm:ss. */
+export function fmtClock(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+}

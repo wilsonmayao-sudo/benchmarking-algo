@@ -63,8 +63,10 @@ const files = [];
   }
 })(jsRoot);
 
-const html = readFileSync(join(root, 'index.html'), 'utf8');
-const htmlIds = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+// Every HTML page in the project root (index.html = benchmark, fleet.html = fleet simulation).
+const pages = readdirSync(root).filter((f) => f.endsWith('.html'));
+const htmlByPage = new Map(pages.map((p) => [p, readFileSync(join(root, p), 'utf8')]));
+const htmlIds = new Set([...htmlByPage.values()].flatMap((h) => [...h.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1])));
 
 const problems = [];
 const rel = (p) => p.replace(root, '').replace(/\\/g, '/');
@@ -87,12 +89,14 @@ for (const file of files) {
   }
 }
 
-for (const m of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
-  if (/^(https?:|#|data:)/.test(m[1])) continue;
-  if (!existsSync(join(root, m[1]))) problems.push(`missing asset   index.html  ->  ${m[1]}`);
+for (const [page, html] of htmlByPage) {
+  for (const m of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
+    if (/^(https?:|#|data:)/.test(m[1])) continue;
+    if (!existsSync(join(root, m[1]))) problems.push(`missing asset   ${page}  ->  ${m[1]}`);
+  }
 }
 
-console.log(`${files.length} JS modules checked · ${htmlIds.size} ids in index.html`);
+console.log(`${files.length} JS modules checked · ${htmlIds.size} ids in ${pages.join(', ')}`);
 for (const problem of problems) console.log(`  \u2717 ${problem}`);
 console.log(problems.length === 0 ? 'Reference check passed.' : `${problems.length} problem(s) found.`);
 process.exitCode = problems.length === 0 ? 0 : 1;

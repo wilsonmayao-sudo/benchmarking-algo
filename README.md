@@ -635,6 +635,67 @@ nodes and route lines are redrawn. Without that, an 11 000-road network would be
 
 ---
 
+## Fleet simulation: road events, ETA, capacity handoff
+
+`fleet.html` (linked from the main page) simulates a fleet of garbage trucks collecting
+bins on a road network that changes while they drive. Everything is loaded from a JSON
+config. The schema is in [`data/scenarios/README.md`](data/scenarios/README.md), and
+[`data/scenarios/sample-fleet.json`](data/scenarios/sample-fleet.json) shows every
+feature: 3 trucks, 15 bins, 2 scheduled closures, a reopen, a scheduled delay and seeded
+random delays.
+
+```bash
+npm start                 # then open http://localhost:8000/fleet.html  (?at=850 jumps to t=850 s)
+npm run fleet             # headless run → results/<scenario>__<variant>.json + results/runs.csv
+npm run fleet:compare     # as configured · no events · scheduled only · 1…N-1 trucks → one CSV
+npm run fleetcheck        # 33 assertions covering every feature below
+node tools/fleetsim.mjs my.json --no-events --trucks 2 --seed 7
+```
+
+| Module | Responsibility |
+|---|---|
+| `js/sim/routing/astar.js` | **Reusable A\***: `astarSearch(graph, s, t, {weight, heuristic})` with Euclidean (default) or Manhattan heuristics. It is separate from the frozen baseline `js/algorithms/astar.js`, which ignores closures |
+| `js/sim/routing/roadState.js` | Closures + delay multipliers. Weight = length × multiplier, ∞ when closed. The `Graph` is never mutated |
+| `js/sim/routing/router.js` | The only caller of A\*. Records count, ms and nodes expanded per search (route / reroute / eta / assign), and caches leg costs per road-state version |
+| `js/sim/events/eventSystem.js` | Time-ordered queue of `ROAD_CLOSURE` / `ROAD_REOPEN` / `TRAFFIC_DELAY`, with auto-scheduled reopen / clear for `duration_s` |
+| `js/sim/fleet/dispatcher.js` | Initial assignment, capacity handoff, pending queue |
+| `js/sim/fleet/eta.js` | ETA to the next stop and to the end of the route |
+| `js/sim/simulation.js` | Tick loop, truck decisions, event handling, logs |
+| `js/sim/metrics.js` | Run summary, CSV / JSON export |
+| `js/fleetui/*` | Canvas map, panels, controls (rendering only) |
+
+**Road events.** On a closure, every truck whose *remaining* route uses that road
+re-runs A\* from where it is now. A truck already part-way along a road finishes that road
+first, so the new route starts at the road's far end. If no route exists, the truck tries
+its other assigned bins. If none of them is reachable either, it is flagged **BLOCKED**
+with a warning, and it retries after every later road change. A reopen or a cleared
+delay re-plans every driving truck, but a reroute is only counted when the path actually
+changes. Each event is logged with its timestamp, edge, effect, and the trucks that were
+rerouted, blocked or unblocked.
+
+**ETA** = A\* path cost ÷ truck speed (cost is in effective metres) + service time per bin
++ unload time + the return leg. The end-of-route projection follows the same visiting
+order and capacity rule the truck will use. ETA is recomputed on every reroute, road
+event, assignment, arrival and service. The map label reads
+`Truck 2 → Bin 14: ETA 4 min 30 s`. `etaMaeS` reports how far actual arrivals were from
+the prediction made when each leg started.
+
+**Capacity.** When a truck is full, or the next bin would overflow it, it stops taking
+bins and drives to the disposal site. Each of its remaining bins goes to the other truck
+with the lowest A\* ETA to that bin, among trucks whose *free* capacity (max − load −
+already-queued bins) fits it. If no truck has room, the bin goes to the pending queue.
+Pending bins are re-offered whenever a truck finishes unloading, goes idle, gets
+unblocked, or a road changes. A bin still uncollected at the end of the run is counted as
+missed. The log reads `Truck 1 full (420/450 kg, next bin 350 kg) → Bin 5 reassigned to Truck 3`.
+
+**Metrics per run:** total distance, makespan, sum of truck working time, A\* calls
+(with a per-purpose breakdown), average A\* ms, nodes expanded (average / min / max /
+total), leg-cache hits, reroutes caused by events, blocked incidents, bin reassignments,
+bins collected vs missed, disposal trips, and ETA error. `runs.csv` is appended to on
+every headless run, so rows from different scenarios end up in one table you can compare.
+
+---
+
 ## Extending
 
 **Add another algorithm** — create `js/algorithms/yourAlgo.js` exporting the contract

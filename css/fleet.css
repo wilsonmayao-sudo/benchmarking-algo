@@ -1,0 +1,95 @@
+/* ==========================================================================
+   Fleet simulation page — extends styles.css (same tokens, same components).
+   ========================================================================== */
+
+.nav-link { color: var(--custom); margin-left: 8px; text-decoration: none; white-space: nowrap; }
+.nav-link:hover { text-decoration: underline; }
+
+.clock {
+  margin-left: auto;
+  font: 600 16px/1 "Cascadia Mono", Consolas, monospace;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.small-zone { margin-top: 8px; padding: 10px; }
+.field-inline-top { margin-top: 10px; }
+.group .check { margin-right: 12px; }
+
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-row button { flex: 1 1 auto; }
+button.primary-inline { background: #2563eb; border-color: #1d4ed8; color: #fff; }
+button.primary-inline:hover:not(:disabled) { background: #1d4ed8; }
+
+/* ---------------------------------------------------------------- map */
+
+.map-card { height: min(72vh, 720px); }
+.map-card canvas { cursor: grab; }
+.map-card canvas:active { cursor: grabbing; }
+@media (max-width: 1100px) { .map-card { height: 460px; } }
+
+.swatch {
+  display: inline-block;
+  width: 11px; height: 11px;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+.swatch.line { width: 18px; height: 3px; border-radius: 2px; }
+.swatch.dash { width: 18px; height: 0; border-top: 3px dashed #ef4444; border-radius: 0; }
+
+/* -------------------------------------------------------- truck list */
+
+.truck-list { display: flex; flex-direction: column; gap: 8px; }
+
+.truck-card {
+  border: 1px solid var(--border-soft);
+  border-left: 4px solid var(--truck, var(--accent));
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: var(--bg-input);
+  font-size: 12px;
+}
+.truck-card.blocked { border-color: #dc2626; background: #2a0f12; }
+.truck-card .t-head { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; }
+.truck-card .t-status { color: var(--text-dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.truck-card.blocked .t-status { color: #f87171; }
+.truck-card .t-eta { margin-top: 3px; color: var(--text); }
+.truck-card .t-eta b { font-variant-numeric: tabular-nums; }
+.truck-card .t-sub { color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+
+.loadbar { height: 5px; border-radius: 3px; background: #243247; margin-top: 5px; overflow: hidden; }
+.loadbar > div { height: 100%; background: var(--truck, var(--accent)); }
+.loadbar.over > div { background: var(--bad); }
+
+/* ---------------------------------------------------------- results */
+
+.fleet-results { margin-top: 0; }
+.fleet-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 18px;
+}
+@media (max-width: 1000px) { .fleet-grid { grid-template-columns: 1fr; } }
+
+.inline-select { margin-left: 8px; font-size: 11px; text-transform: none; letter-spacing: 0; padding: 2px 4px; }
+
+.log-list {
+  height: 340px;
+  overflow-y: auto;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 0;
+  font-size: 12px;
+}
+.log-row { display: grid; grid-template-columns: 64px 74px 1fr; gap: 8px; padding: 3px 12px; }
+.log-row:hover { background: #243247; }
+.log-row .lt { color: var(--text-dim); font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; }
+.log-row .lk { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; color: var(--text-dim); }
+.log-row.k-event .lk { color: #fb923c; }
+.log-row.k-handoff .lk { color: #a78bfa; }
+.log-row.k-pending .lk { color: #eab308; }
+.log-row.k-warning .lk, .log-row.k-warning .lx { color: #f87171; }
+.log-row.k-collect .lk { color: #4ade80; }
+
+td.left, th.left { text-align: left; white-space: normal; }
