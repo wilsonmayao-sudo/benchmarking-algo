@@ -109,6 +109,46 @@ export class Simulation {
     return this.summary();
   }
 
+  /**
+   * Apply a road event right now, while the run is in progress (UI "live events").
+   * @param {{type:string, edge:number, factor?:number, duration?:number, note?:string, source?:string}} ev
+   * @returns {object|null} the event-log entry, or null if the run is already finished / invalid
+   */
+  injectEvent(ev) {
+    if (this.finished) return null;
+    if (!Number.isInteger(ev.edge) || ev.edge < 0 || ev.edge >= this.graph.edgeCount) return null;
+    if (ev.type === 'TRAFFIC_DELAY' && !(ev.factor > 0)) return null;
+    const full = { note: '', source: 'manual', ...ev, time: this.time };
+    this.world.events.push(full); // keeps summary().events in step with what was applied
+    const t0 = now();
+    this.handleEvent(full);
+    this.metrics.wallMs += now() - t0;
+    return this.eventLog[this.eventLog.length - 1];
+  }
+
+  /**
+   * Return a road to normal right now: reopen it and/or cancel its delay. Queued automatic
+   * follow-ups for that road (closure expiry, "delay cleared") are dropped first, otherwise
+   * an old "delay cleared" would later divide the weight again and make the road faster
+   * than normal.
+   * @returns {number} number of events applied (0 = the road was already normal)
+   */
+  clearRoad(edge, source = 'manual') {
+    if (this.finished || !Number.isInteger(edge) || edge < 0 || edge >= this.graph.edgeCount) return 0;
+    this.events.removeWhere((ev) => ev.edge === edge && ev.source === 'auto');
+    let applied = 0;
+    if (this.road.isClosed(edge)) {
+      this.injectEvent({ type: 'ROAD_REOPEN', edge, source, note: 'cleared from the map' });
+      applied++;
+    }
+    const m = this.road.multiplier[edge];
+    if (m !== 1) {
+      this.injectEvent({ type: 'TRAFFIC_DELAY', edge, factor: 1 / m, isEnd: true, source, note: 'cleared from the map' });
+      applied++;
+    }
+    return applied;
+  }
+
   summary() {
     return summarize(this);
   }

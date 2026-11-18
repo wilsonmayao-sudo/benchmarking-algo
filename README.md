@@ -13,8 +13,8 @@ in the browser with `performance.now()`.
 ES modules cannot be loaded from a `file://` URL, so serve the folder over HTTP:
 
 ```bash
-npm start
-# or: python -m http.server 8000
+npm start            # Node server, no Python needed
+# or: node tools/serve.mjs 8000   (or python -m http.server 8000)
 ```
 
 Then open <http://localhost:8000>. Use the **City map** panel to load your own road
@@ -643,6 +643,42 @@ config. The schema is in [`data/scenarios/README.md`](data/scenarios/README.md),
 [`data/scenarios/sample-fleet.json`](data/scenarios/sample-fleet.json) shows every
 feature: 3 trucks, 15 bins, 2 scheduled closures, a reopen, a scheduled delay and seeded
 random delays.
+
+The page opens [`data/scenarios/naga-swmo-schedule.json`](data/scenarios/naga-swmo-schedule.json)
+by default. Its bins are the real collection stops from the EcoLoop `collection_schedules` table
+(`data/collection_schedules.csv`, exported from Supabase), placed at their recorded lat/lng, and its
+trucks are the 14 active fleet units with their real `capacity_kg`. Each truck covers the schedule
+area(s) in `trucks[].areas`. The *Schedule day* picker keeps only the stops collected that day.
+Stops more than 300 m from the mapped roads are left out, because the road file covers central
+Naga only. The page lists how many were left out, and `npm run fleet -- <file> --day mon` does the same headless.
+
+[`data/scenarios/naga-14-trucks.json`](data/scenarios/naga-14-trucks.json) is the same city with random bins: the real Naga City road map (3 031 junctions, 3 377 roads) drawn over
+OpenStreetMap street tiles, 14 trucks starting spread across the city, 98 random bins and
+12 random road events. Depot and disposal use the EcoLoop WebApp coordinates: SWMO
+Motorpool & Dispatch Depot (13.6218, 123.1948) and SWMO - Sanitary Landfill, San Isidro
+(13.6212, 123.2576). The landfill lies about 5.7 km east of the road file, so it is reached
+by one straight connector road. That road is shorter than the real one, so disposal trips are
+slightly under-estimated. Pick the 3-truck sample from the scenario box.
+
+Markers use the same icons as the WebApp map: trucks (white disc, ring in the truck colour,
+number badge, and an ETA chip underneath, always shown), bins (trash icon on a tile coloured
+by fill status), the depot (warehouse) and the landfill (recycling icon). The street map needs
+internet; offline, the plain road network is drawn instead. Untick *Street map* to hide it.
+
+**Events you control on the page**
+
+| Control | What it does |
+|---|---|
+| *Number of random events* | How many closures / delays are pre-generated for the run (resets the run) |
+| *🎲 Re-roll* | Moves every random event to new roads and times. The seed is shown, and the same seed always gives the same events |
+| *Add event now* bar → *Click a road* | Choose closure / delay / clear, then click roads on the map. Applied at the current simulated time, while playing or paused. Trucks whose route uses the road re-plan with A\* at once |
+| *🎲 Random event now* | One random closure or delay on a random road, right now |
+| *⛶ Full screen* | Map, both toolbars and Play/Pause fill the screen |
+
+Clearing a road also cancels its queued automatic follow-ups. Otherwise an old "delay
+cleared" would later divide the weight again and make the road faster than normal.
+Events added live appear in the event log with source `manual` or `random (live)`, and
+they are counted in the run metrics. `npm run livecheck` covers all of this (19 checks).
 
 ```bash
 npm start                 # then open http://localhost:8000/fleet.html  (?at=850 jumps to t=850 s)

@@ -37,6 +37,11 @@ example. It is the one `fleet.html` and `npm run fleet` load by default.
     // "truck" is optional. Bins without one are auto-assigned to the truck with the
     // lowest ETA that has enough free capacity.
   ],
+  // or the real stops from an EcoLoop export (collection_schedules or bins table, CSV):
+  //   "bins": { "csv": "data/collection_schedules.csv", "day": "Mon", "areas": ["AREA-1"],
+  //             "stop_types": ["collection"], "max_snap_m": 300, "fill": [30, 100], "assign_by_area": true }
+  //   Stops are placed at their latitude/longitude (imported maps only). A truck with
+  //   "areas": ["AREA-1"] collects that area's stops. Every skipped row is counted by reason.
   // or random placement:  "bins": { "random": { "count": 15, "fill": [10, 100], "seed": 7 } }
 
   "events": {
@@ -65,6 +70,10 @@ delay it schedules the "delay cleared" event.
 | `explicit` | `nodes: [{id,x,y}]` (metres), `edges: [{from,to,id?,length?,oneway?}]` | node id `"C3"` | `"C3-D3"` (either direction) or the edge `id` |
 | `generated` | `network: {type:"grid"\|"random", targetNodes, width, height}` | index `42` or `{"at":[fx,fy]}` | index `17` or `{"from":12,"to":13}` |
 | `geojson` | `path: "data/Naga_City_roads.geojson"` (GeoJSON / Overpass / CSV) | same as generated | same as generated |
+
+On imported maps a node can also be given as `{"lat": 13.6218, "lng": 123.1948}` (nearest node), and the depot / disposal may carry a `"name"` shown on the map.
+
+Places outside the road file can be linked with `map.connectors`: `[{ "to": [lng, lat], "name": "...", "maxspeed": 40 }]` adds one straight road from the nearest mapped road vertex to that point. Its length is the straight-line distance, so it is shorter than the real road; mention this wherever distances are reported.
 
 `{"at": [0.5, 0.5]}` means "the node nearest to the middle of the map". The fractions are
 of the bounding box, so (0,0) is bottom-left and (1,1) is top-right. On imported maps

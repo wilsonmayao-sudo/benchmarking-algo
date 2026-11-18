@@ -29,9 +29,14 @@
     <section class="group">
       <h2>Scenario</h2>
       <div class="path-row">
-        <input id="scenarioPath" type="text" spellcheck="false" value="data/scenarios/sample-fleet.json" />
+        <input id="scenarioPath" type="text" spellcheck="false" list="scenarioList" value="data/scenarios/naga-swmo-schedule.json" />
         <button id="scenarioLoad" class="small" type="button">Load</button>
       </div>
+      <datalist id="scenarioList">
+        <option value="data/scenarios/naga-swmo-schedule.json">Naga City — SWMO schedule stops, 14 trucks</option>
+        <option value="data/scenarios/naga-14-trucks.json">Naga City — random bins, 14 trucks</option>
+        <option value="data/scenarios/sample-fleet.json">Sample — 3 trucks</option>
+      </datalist>
       <div class="dropzone small-zone">
         <input id="scenarioFile" type="file" accept=".json,application/json" aria-label="Scenario config file" />
         <span class="dropzone-text"><strong>Choose a config</strong> or drop a .json here</span>
@@ -41,8 +46,29 @@
 
     <section class="group">
       <h2>Variant</h2>
+      <label class="field" id="optDayWrap" hidden>
+        <span>Schedule day (stops collected that day)</span>
+        <select id="optDay">
+          <option value="all">All days</option>
+          <option value="mon">Monday</option>
+          <option value="tue">Tuesday</option>
+          <option value="wed">Wednesday</option>
+          <option value="thu">Thursday</option>
+          <option value="fri">Friday</option>
+          <option value="sat">Saturday</option>
+          <option value="sun">Sunday</option>
+        </select>
+      </label>
       <label class="check"><input type="checkbox" id="optEvents" checked /> Road events</label>
       <label class="check"><input type="checkbox" id="optRandom" checked /> Random events</label>
+      <label class="field field-inline-top" for="optRandomCount">
+        <span>Number of random events</span>
+      </label>
+      <div class="path-row">
+        <input id="optRandomCount" type="number" min="0" max="200" step="1" value="0" />
+        <button id="btnReroll" class="small" type="button" title="Place the random events on different roads and times">&#127922; Re-roll</button>
+      </div>
+      <p class="hint" id="eventSeedInfo"></p>
       <label class="field field-inline-top">
         <span>Trucks used</span>
         <select id="optTrucks"></select>
@@ -90,14 +116,32 @@
   <!-- ---------------------------------------------------------------- -->
   <!-- Map                                                               -->
   <!-- ---------------------------------------------------------------- -->
-  <section class="stage">
+  <section class="stage" id="stage">
     <div class="stage-toolbar">
+      <label class="check"><input type="checkbox" id="optBasemap" checked /> Street map</label>
       <label class="check"><input type="checkbox" id="optPaths" checked /> Planned paths</label>
-      <label class="check"><input type="checkbox" id="optEtaLabels" checked /> ETA labels</label>
+      <label class="check"><input type="checkbox" id="optEtaLabels" checked /> ETA details</label>
       <label class="check"><input type="checkbox" id="optBinLabels" checked /> Bin labels</label>
       <label class="check"><input type="checkbox" id="optNodeIds" /> Node ids</label>
       <button id="mapReset" class="small" type="button">Reset view</button>
+      <button id="btnFullscreen" class="small" type="button">&#x26F6; Full screen</button>
       <span class="hint">scroll = zoom &middot; drag = pan</span>
+    </div>
+    <div class="stage-toolbar live-bar">
+      <button id="btnPlay2" type="button" class="small primary-inline">&#9654; Play</button>
+      <strong class="live-title">Add event now</strong>
+      <select id="liveType" aria-label="Event type">
+        <option value="ROAD_CLOSURE">Road closure</option>
+        <option value="TRAFFIC_DELAY">Traffic delay</option>
+        <option value="CLEAR">Clear road (reopen / end delay)</option>
+      </select>
+      <label class="field inline" id="liveFactorWrap"><span>slower &times;</span>
+        <input id="liveFactor" type="number" min="1.1" max="10" step="0.1" value="2.5" /></label>
+      <label class="field inline" id="liveDurationWrap"><span>for</span>
+        <input id="liveDuration" type="number" min="0" max="600" step="1" value="10" /><span>min (0 = until cleared)</span></label>
+      <button id="btnPick" class="small" type="button" aria-pressed="false">&#128433; Click a road</button>
+      <button id="btnRandomNow" class="small" type="button">&#127922; Random event now</button>
+      <span class="hint" id="liveInfo">Works while playing or paused.</span>
     </div>
     <div class="view-card map-card">
       <canvas id="fleetCanvas"></canvas>
@@ -141,7 +185,7 @@
   <div class="overlay-card">
     <h2>Serve this folder over HTTP</h2>
     <p>ES modules cannot load from <code>file://</code>. Run <code>npm start</code> (or
-      <code>python -m http.server 8000</code>) and open <code>http://localhost:8000/fleet.html</code>.</p>
+      <code>node tools/serve.mjs</code>) and open <code>http://localhost:8000/fleet.html</code>.</p>
   </div>
 </div>
 <script>

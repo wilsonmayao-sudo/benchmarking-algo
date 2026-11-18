@@ -3,7 +3,7 @@
  * comparison, legend. Pure rendering — reads the simulation, never changes it.
  */
 
-import { etaLines } from './mapView.js';
+import { etaLines, ICON_PATHS } from './mapView.js';
 import { BIN_STATUS_COLORS } from '../sim/fleet/bins.js';
 import { truckRows } from '../sim/metrics.js';
 import { fmtDuration } from '../sim/fleet/eta.js';
@@ -107,7 +107,16 @@ export function renderLegend(el, sim) {
   const th = sim.world.settings.fill_thresholds;
   const item = (sw, label) => `<span class="legend-item">${sw}${esc(label)}</span>`;
   const box = (c) => `<span class="swatch" style="background:${c}"></span>`;
+  // Same icons as on the map, so the legend says which marker is which.
+  const svg = (kind, stroke, bg, ring) => `<span class="legend-icon" style="background:${bg};border-color:${ring}">` +
+    `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="${stroke}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">` +
+    `${ICON_PATHS[kind].map((d) => `<path d="${d}"/>`).join('')}</svg></span>`;
   el.innerHTML = [
+    item(svg('truck', '#0f172a', '#fff', '#38bdf8'), 'truck (ring = its colour, chip = ETA)'),
+    item(svg('bin', '#0f172a', BIN_STATUS_COLORS.full, '#0f172a'), 'bin'),
+    item(svg('depot', '#065f46', '#fff', '#059669'), sim.world.depotName || 'depot'),
+    ...(sim.world.disposal !== sim.world.depot
+      ? [item(svg('landfill', '#065f46', '#fff', '#059669'), sim.world.disposalName || 'disposal')] : []),
     item(box(BIN_STATUS_COLORS.low), `bin < ${th.medium}%`),
     item(box(BIN_STATUS_COLORS.medium), `bin ${th.medium}–${th.high}%`),
     item(box(BIN_STATUS_COLORS.full), `bin ≥ ${th.high}% (needs pickup)`),

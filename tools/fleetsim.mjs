@@ -9,6 +9,7 @@
  *   --no-random        keep scheduled events, drop random ones
  *   --trucks <n>       use only the first n trucks from the config
  *   --seed <n>         override the scenario seed (changes random events / bins)
+ *   --day <day>        schedule day for CSV-imported stops (mon … sun, or all)
  *   --compare          run a standard set of variants and write ONE comparison CSV:
  *                        as configured · no events · scheduled only · each truck count
  *   --log              print the full run log, not only events / handoffs / warnings
@@ -102,6 +103,7 @@ if (flag('--no-events')) base.noEvents = true;
 if (flag('--no-random')) base.noRandomEvents = true;
 if (opt('--trucks')) base.truckCount = Number(opt('--trucks'));
 if (opt('--seed')) base.seed = Number(opt('--seed'));
+if (opt('--day')) base.binDay = opt('--day');
 
 if (flag('--compare')) {
   const truckTotal = (config.trucks || []).length;

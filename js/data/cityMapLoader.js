@@ -724,6 +724,9 @@ function buildMapFromLines(intermediate, ctx) {
   return {
     name: ctx.name,
     source: intermediate.source,
+    // Projection used for x/y (equirectangular, metres from the south-west corner).
+    // Lets the fleet map put lat/lng places and street-map tiles on the same coordinates.
+    geo: { minLat, minLon, mPerLat, mPerLon },
     nodeCount,
     edgeCount,
     hasElevation,

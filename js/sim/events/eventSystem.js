@@ -44,6 +44,13 @@ export class EventQueue {
 
   /** Upcoming events (read-only copy) — shown in the UI timeline. */
   upcoming() { return this._queue.slice(); }
+
+  /** Drop queued events matching `pred`. Returns how many were removed. */
+  removeWhere(pred) {
+    const before = this._queue.length;
+    this._queue = this._queue.filter((ev) => !pred(ev));
+    return before - this._queue.length;
+  }
 }
 
 /**

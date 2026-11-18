@@ -23,10 +23,31 @@ button.primary-inline:hover:not(:disabled) { background: #1d4ed8; }
 
 /* ---------------------------------------------------------------- map */
 
-.map-card { height: min(72vh, 720px); }
+.map-card { height: max(600px, calc(100vh - 200px)); }
 .map-card canvas { cursor: grab; }
 .map-card canvas:active { cursor: grabbing; }
-@media (max-width: 1100px) { .map-card { height: 460px; } }
+.map-card canvas.picking, .map-card canvas.picking:active { cursor: crosshair; }
+@media (max-width: 1100px) { .map-card { height: max(520px, 75vh); } }
+
+/* Full screen: the whole stage (toolbars + map + legend) fills the screen. */
+.stage:fullscreen {
+  background: var(--bg);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.stage:fullscreen .map-card { flex: 1 1 auto; height: auto; min-height: 0; }
+
+/* Live-event bar */
+.live-bar { gap: 8px 12px; }
+.live-bar .live-title { font-size: 12px; color: var(--warn); text-transform: uppercase; letter-spacing: 0.05em; }
+.live-bar .field.inline input { width: 64px; }
+.live-bar #liveInfo { margin: 0; }
+.live-bar #liveInfo.ok { color: var(--good); }
+.live-bar #liveInfo.err { color: var(--bad); }
+button[aria-pressed="true"] { background: #a16207; border-color: #ca8a04; color: #fff; }
+#optRandomCount { width: 100%; }
 
 .swatch {
   display: inline-block;
@@ -93,3 +114,11 @@ button.primary-inline:hover:not(:disabled) { background: #1d4ed8; }
 .log-row.k-collect .lk { color: #4ade80; }
 
 td.left, th.left { text-align: left; white-space: normal; }
+.live-bar [hidden] { display: none !important; }
+.legend-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%; border: 2px solid; vertical-align: middle;
+}
+.live-bar select { width: auto; flex: none; }
+#optDayWrap[hidden] { display: none; }
+#optDayWrap { margin-bottom: 10px; }

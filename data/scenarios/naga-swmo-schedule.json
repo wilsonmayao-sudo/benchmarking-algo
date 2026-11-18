@@ -1,0 +1,268 @@
+{
+  "name": "Naga City — SWMO collection schedule, 14 active trucks",
+  "description": "Bins are the real collection stops from the EcoLoop collection_schedules table (SWMO Garbage-Collection-Scheme-Clustering-Updated-2026-Final.pdf), placed at their recorded latitude/longitude. Only stop_type = collection is used (start, dump, break, washing and review rows are not bins). Stops more than 300 m from the mapped roads are left out because the road file covers central Naga only; the import summary says how many. Trucks are the 14 active units of the EcoLoop fleet with their capacity_kg; each covers the schedule area(s) listed in this file (an assumption, edit trucks[].areas to change it) and starts at that area’s starting point when the schedule has one. Fill levels are not in the schedule, so they are seeded random (30–100 %). Depot and landfill use the WebApp coordinates; the landfill is reached by a straight connector road.",
+  "seed": 20261118,
+  "map": {
+    "type": "geojson",
+    "path": "data/Naga_City_roads.geojson",
+    "connectors": [
+      {
+        "to": [
+          123.2576126,
+          13.6212151
+        ],
+        "name": "Connector to SWMO Sanitary Landfill (straight-line approximation)",
+        "maxspeed": 40
+      }
+    ]
+  },
+  "depot": {
+    "lat": 13.6218,
+    "lng": 123.1948,
+    "name": "SWMO Motorpool & Dispatch Depot"
+  },
+  "disposal": {
+    "lat": 13.6212151,
+    "lng": 123.2576126,
+    "name": "SWMO - Sanitary Landfill (San Isidro)"
+  },
+  "settings": {
+    "heuristic": "euclidean",
+    "service_time_s": 60,
+    "unload_time_s": 300,
+    "dt_s": 1,
+    "max_time_s": 43200,
+    "bin_capacity_kg": 120,
+    "fill_thresholds": {
+      "medium": 40,
+      "high": 75
+    },
+    "visit_order": "nearest",
+    "return_to_depot": true
+  },
+  "trucks": [
+    {
+      "id": "TRK-01",
+      "name": "Hino 500 Unit 1",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-1"
+      ],
+      "start": {
+        "lat": 13.624704,
+        "lng": 123.184339
+      }
+    },
+    {
+      "id": "TRK-02",
+      "name": "Hino 500 Unit 2",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-2A"
+      ],
+      "start": {
+        "lat": 13.63185,
+        "lng": 123.18678
+      }
+    },
+    {
+      "id": "TRK-03",
+      "name": "Hino 500 Unit 3",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-2B"
+      ]
+    },
+    {
+      "id": "TRK-10",
+      "name": "Compactor Truck 1",
+      "speed_kph": 22,
+      "max_capacity": 4116,
+      "current_load": 0,
+      "areas": [
+        "AREA-4",
+        "COMPACTOR"
+      ],
+      "start": {
+        "lat": 13.62892,
+        "lng": 123.19015
+      }
+    },
+    {
+      "id": "TRK-11",
+      "name": "Small Compactor Truck 1",
+      "speed_kph": 22,
+      "max_capacity": 588,
+      "current_load": 0,
+      "areas": [
+        "AREA-12"
+      ]
+    },
+    {
+      "id": "TRK-12",
+      "name": "Hino 300 Unit 1",
+      "speed_kph": 22,
+      "max_capacity": 2058,
+      "current_load": 0,
+      "areas": [
+        "AREA-3"
+      ],
+      "start": {
+        "lat": 13.62084,
+        "lng": 123.20315
+      }
+    },
+    {
+      "id": "TRK-13",
+      "name": "Isuzu Giga 1",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-5"
+      ],
+      "start": {
+        "lat": 13.61945,
+        "lng": 123.18125
+      }
+    },
+    {
+      "id": "TRK-14",
+      "name": "Isuzu Giga 2",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-6"
+      ],
+      "start": {
+        "lat": 13.624704,
+        "lng": 123.184339
+      }
+    },
+    {
+      "id": "TRK-15",
+      "name": "Hino 500 Unit 7",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-7"
+      ],
+      "start": {
+        "lat": 13.6145217,
+        "lng": 123.1927033
+      }
+    },
+    {
+      "id": "TRK-16",
+      "name": "Hino 500 Unit 8",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-8"
+      ]
+    },
+    {
+      "id": "TRK-17",
+      "name": "Fuso Fighter 1",
+      "speed_kph": 22,
+      "max_capacity": 2352,
+      "current_load": 0,
+      "areas": [
+        "AREA-9"
+      ]
+    },
+    {
+      "id": "TRK-18",
+      "name": "Fuso Fighter 2",
+      "speed_kph": 22,
+      "max_capacity": 2352,
+      "current_load": 0,
+      "areas": [
+        "AREA-10",
+        "AREA-15"
+      ],
+      "start": {
+        "lat": 13.62892,
+        "lng": 123.19015
+      }
+    },
+    {
+      "id": "TRK-19",
+      "name": "Dongfeng Dump 1",
+      "speed_kph": 22,
+      "max_capacity": 3528,
+      "current_load": 0,
+      "areas": [
+        "AREA-11"
+      ],
+      "start": {
+        "lat": 13.6145217,
+        "lng": 123.1927033
+      }
+    },
+    {
+      "id": "TRK-20",
+      "name": "Dongfeng Dump 2",
+      "speed_kph": 22,
+      "max_capacity": 3528,
+      "current_load": 0,
+      "areas": [
+        "AREA-13",
+        "FLEET-CLEARING"
+      ],
+      "start": {
+        "lat": 13.61385,
+        "lng": 123.18392
+      }
+    }
+  ],
+  "bins": {
+    "csv": "data/collection_schedules.csv",
+    "stop_types": [
+      "collection"
+    ],
+    "max_snap_m": 300,
+    "fill": [
+      30,
+      100
+    ],
+    "seed": 7,
+    "assign_by_area": true
+  },
+  "events": {
+    "random": {
+      "enabled": true,
+      "seed": 11,
+      "count": 12,
+      "window_s": [
+        120,
+        3600
+      ],
+      "types": {
+        "TRAFFIC_DELAY": 0.6,
+        "ROAD_CLOSURE": 0.4
+      },
+      "closure_duration_s": [
+        300,
+        1200
+      ],
+      "delay_factor": [
+        1.5,
+        3
+      ],
+      "delay_duration_s": [
+        300,
+        900
+      ]
+    }
+  }
+}

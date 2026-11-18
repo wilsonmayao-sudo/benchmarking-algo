@@ -1,0 +1,236 @@
+{
+  "name": "Naga City — 14 trucks, 98 bins, random road events",
+  "description": "Real Naga City road network (3 031 junctions, 3 377 roads). Depot and disposal use the same coordinates as the EcoLoop WebApp: SWMO Motorpool & Dispatch Depot (13.6218, 123.1948) and SWMO - Sanitary Landfill, San Isidro (13.6212, 123.2576). The landfill lies east of the road file, so it is reached by one straight connector road from the nearest mapped road (shorter than the real road). 14 trucks start spread across the city and return to the depot; 98 bins are placed at random; road closures and traffic delays are generated at random, and more can be added live while it runs.",
+  "seed": 20261118,
+  "map": {
+    "type": "geojson",
+    "path": "data/Naga_City_roads.geojson",
+    "connectors": [
+      {
+        "to": [
+          123.2576126,
+          13.6212151
+        ],
+        "name": "Connector to SWMO Sanitary Landfill (straight-line approximation)",
+        "maxspeed": 40
+      }
+    ]
+  },
+  "depot": {
+    "lat": 13.6218,
+    "lng": 123.1948,
+    "name": "SWMO Motorpool & Dispatch Depot"
+  },
+  "disposal": {
+    "lat": 13.6212151,
+    "lng": 123.2576126,
+    "name": "SWMO - Sanitary Landfill (San Isidro)"
+  },
+  "settings": {
+    "heuristic": "euclidean",
+    "service_time_s": 60,
+    "unload_time_s": 300,
+    "dt_s": 1,
+    "max_time_s": 14400,
+    "bin_capacity_kg": 120,
+    "fill_thresholds": {
+      "medium": 40,
+      "high": 75
+    },
+    "visit_order": "nearest",
+    "return_to_depot": true
+  },
+  "trucks": [
+    {
+      "id": "T1",
+      "name": "Truck 1",
+      "speed_kph": 22,
+      "max_capacity": 800,
+      "current_load": 0,
+      "start": {
+        "lat": 13.609673,
+        "lng": 123.16763
+      }
+    },
+    {
+      "id": "T2",
+      "name": "Truck 2",
+      "speed_kph": 20,
+      "max_capacity": 700,
+      "current_load": 0,
+      "start": {
+        "lat": 13.607772,
+        "lng": 123.176454
+      }
+    },
+    {
+      "id": "T3",
+      "name": "Truck 3",
+      "speed_kph": 24,
+      "max_capacity": 900,
+      "current_load": 0,
+      "start": {
+        "lat": 13.607772,
+        "lng": 123.187483
+      }
+    },
+    {
+      "id": "T4",
+      "name": "Truck 4",
+      "speed_kph": 18,
+      "max_capacity": 650,
+      "current_load": 100,
+      "start": {
+        "lat": 13.609673,
+        "lng": 123.198512
+      }
+    },
+    {
+      "id": "T5",
+      "name": "Truck 5",
+      "speed_kph": 25,
+      "max_capacity": 1000,
+      "current_load": 0,
+      "start": {
+        "lat": 13.619174,
+        "lng": 123.16763
+      }
+    },
+    {
+      "id": "T6",
+      "name": "Truck 6",
+      "speed_kph": 21,
+      "max_capacity": 750,
+      "current_load": 0,
+      "start": {
+        "lat": 13.617274,
+        "lng": 123.176454
+      }
+    },
+    {
+      "id": "T7",
+      "name": "Truck 7",
+      "speed_kph": 23,
+      "max_capacity": 850,
+      "current_load": 200,
+      "start": {
+        "lat": 13.617274,
+        "lng": 123.189689
+      }
+    },
+    {
+      "id": "T8",
+      "name": "Truck 8",
+      "speed_kph": 19,
+      "max_capacity": 600,
+      "current_load": 0,
+      "start": {
+        "lat": 13.621075,
+        "lng": 123.199836
+      }
+    },
+    {
+      "id": "T9",
+      "name": "Truck 9",
+      "speed_kph": 22,
+      "max_capacity": 950,
+      "current_load": 0,
+      "start": {
+        "lat": 13.630577,
+        "lng": 123.16763
+      }
+    },
+    {
+      "id": "T10",
+      "name": "Truck 10",
+      "speed_kph": 20,
+      "max_capacity": 700,
+      "current_load": 150,
+      "start": {
+        "lat": 13.626776,
+        "lng": 123.176454
+      }
+    },
+    {
+      "id": "T11",
+      "name": "Truck 11",
+      "speed_kph": 24,
+      "max_capacity": 800,
+      "current_load": 0,
+      "start": {
+        "lat": 13.628676,
+        "lng": 123.187483
+      }
+    },
+    {
+      "id": "T12",
+      "name": "Truck 12",
+      "speed_kph": 21,
+      "max_capacity": 900,
+      "current_load": 0,
+      "start": {
+        "lat": 13.632477,
+        "lng": 123.198512
+      }
+    },
+    {
+      "id": "T13",
+      "name": "Truck 13",
+      "speed_kph": 18,
+      "max_capacity": 650,
+      "current_load": 0,
+      "start": {
+        "lat": 13.635518,
+        "lng": 123.174248
+      }
+    },
+    {
+      "id": "T14",
+      "name": "Truck 14",
+      "speed_kph": 23,
+      "max_capacity": 750,
+      "current_load": 250,
+      "start": {
+        "lat": 13.636278,
+        "lng": 123.189689
+      }
+    }
+  ],
+  "bins": {
+    "random": {
+      "count": 98,
+      "fill": [
+        30,
+        100
+      ],
+      "seed": 7
+    }
+  },
+  "events": {
+    "random": {
+      "enabled": true,
+      "seed": 11,
+      "count": 12,
+      "window_s": [
+        120,
+        3600
+      ],
+      "types": {
+        "TRAFFIC_DELAY": 0.6,
+        "ROAD_CLOSURE": 0.4
+      },
+      "closure_duration_s": [
+        300,
+        1200
+      ],
+      "delay_factor": [
+        1.5,
+        3
+      ],
+      "delay_duration_s": [
+        300,
+        900
+      ]
+    }
+  }
+}

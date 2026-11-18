@@ -5,14 +5,16 @@
   "type": "module",
   "description": "Browser-based benchmark comparing a custom pathfinding algorithm with standard A* on solid-waste-collection road networks.",
   "scripts": {
-    "start": "python -m http.server 8000",
-    "serve": "python -m http.server 8000",
+    "start": "node tools/serve.mjs",
+    "serve": "node tools/serve.mjs",
     "selfcheck": "node tools/selfcheck.mjs",
     "checkrefs": "node tools/checkrefs.mjs",
     "compare": "node tools/compare.mjs",
-    "check": "node tools/checkrefs.mjs && node tools/selfcheck.mjs && node tools/fleetcheck.mjs",
+    "check": "node tools/checkrefs.mjs && node tools/selfcheck.mjs && node tools/fleetcheck.mjs && node tools/livecheck.mjs",
     "fleet": "node tools/fleetsim.mjs",
     "fleet:compare": "node tools/fleetsim.mjs --compare",
-    "fleetcheck": "node tools/fleetcheck.mjs"
+    "fleetcheck": "node tools/fleetcheck.mjs",
+    "serve:python": "python -m http.server 8000",
+    "livecheck": "node tools/livecheck.mjs"
   }
 }
