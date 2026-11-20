@@ -649,16 +649,18 @@ by default. Its bins are the real collection stops from the EcoLoop `collection_
 (`data/collection_schedules.csv`, exported from Supabase), placed at their recorded lat/lng, and its
 trucks are the 14 active fleet units with their real `capacity_kg`. Each truck covers the schedule
 area(s) in `trucks[].areas`. The *Schedule day* picker keeps only the stops collected that day.
-Stops more than 300 m from the mapped roads are left out, because the road file covers central
-Naga only. The page lists how many were left out, and `npm run fleet -- <file> --day mon` does the same headless.
+Stops more than 300 m from the mapped roads are left out. The page lists how many were left out, and `npm run fleet -- <file> --day mon` does the same headless.
 
-[`data/scenarios/naga-14-trucks.json`](data/scenarios/naga-14-trucks.json) is the same city with random bins: the real Naga City road map (3 031 junctions, 3 377 roads) drawn over
-OpenStreetMap street tiles, 14 trucks starting spread across the city, 98 random bins and
+[`data/scenarios/naga-14-trucks.json`](data/scenarios/naga-14-trucks.json) is the same city with random bins: the real Naga City road map (whole city from OpenStreetMap, 19 744 junctions, 21 643 roads) drawn over
+OpenStreetMap street tiles, 14 trucks that all start and end at the depot, 98 random bins and
 12 random road events. Depot and disposal use the EcoLoop WebApp coordinates: SWMO
 Motorpool & Dispatch Depot (13.6218, 123.1948) and SWMO - Sanitary Landfill, San Isidro
-(13.6212, 123.2576). The landfill lies about 5.7 km east of the road file, so it is reached
-by one straight connector road. That road is shorter than the real one, so disposal trips are
-slightly under-estimated. Pick the 3-truck sample from the scenario box.
+(13.6212, 123.2576). The road file covers the landfill too, so disposal trips follow the real
+roads (the landfill is 19 m from the nearest mapped road). Pick the 3-truck sample from the scenario box.
+
+`data/Naga_City_roads.geojson` holds every drivable OpenStreetMap road in the box
+123.155–123.312 E, 13.595–13.680 N (© OpenStreetMap contributors, ODbL). The previous
+central-only file is kept as `data/Naga_City_roads.central-only.bak.geojson`.
 
 Markers use the same icons as the WebApp map: trucks (white disc, ring in the truck colour,
 number badge, and an ETA chip underneath, always shown), bins (trash icon on a tile coloured

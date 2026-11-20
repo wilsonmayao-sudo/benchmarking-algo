@@ -1,20 +1,10 @@
 {
   "name": "Naga City — SWMO collection schedule, 14 active trucks",
-  "description": "Bins are the real collection stops from the EcoLoop collection_schedules table (SWMO Garbage-Collection-Scheme-Clustering-Updated-2026-Final.pdf), placed at their recorded latitude/longitude. Only stop_type = collection is used (start, dump, break, washing and review rows are not bins). Stops more than 300 m from the mapped roads are left out because the road file covers central Naga only; the import summary says how many. Trucks are the 14 active units of the EcoLoop fleet with their capacity_kg; each covers the schedule area(s) listed in this file (an assumption, edit trucks[].areas to change it) and starts at that area’s starting point when the schedule has one. Fill levels are not in the schedule, so they are seeded random (30–100 %). Depot and landfill use the WebApp coordinates; the landfill is reached by a straight connector road.",
+  "description": "Bins are the real collection stops from the EcoLoop collection_schedules table (SWMO Garbage-Collection-Scheme-Clustering-Updated-2026-Final.pdf), placed at their recorded latitude/longitude. Only stop_type = collection is used (start, dump, break, washing and review rows are not bins). Stops more than 300 m from the mapped roads are left out; the import summary says how many. Trucks are the 14 active units of the EcoLoop fleet with their capacity_kg; each covers the schedule area(s) listed in this file (an assumption, edit trucks[].areas to change it) and every truck starts at the depot. Fill levels are not in the schedule, so they are seeded random (30–100 %). Depot and landfill use the WebApp coordinates; disposal trips follow the real roads to the landfill.",
   "seed": 20261118,
   "map": {
     "type": "geojson",
-    "path": "data/Naga_City_roads.geojson",
-    "connectors": [
-      {
-        "to": [
-          123.2576126,
-          13.6212151
-        ],
-        "name": "Connector to SWMO Sanitary Landfill (straight-line approximation)",
-        "maxspeed": 40
-      }
-    ]
+    "path": "data/Naga_City_roads.geojson"
   },
   "depot": {
     "lat": 13.6218,
@@ -49,11 +39,7 @@
       "current_load": 0,
       "areas": [
         "AREA-1"
-      ],
-      "start": {
-        "lat": 13.624704,
-        "lng": 123.184339
-      }
+      ]
     },
     {
       "id": "TRK-02",
@@ -63,11 +49,7 @@
       "current_load": 0,
       "areas": [
         "AREA-2A"
-      ],
-      "start": {
-        "lat": 13.63185,
-        "lng": 123.18678
-      }
+      ]
     },
     {
       "id": "TRK-03",
@@ -88,11 +70,7 @@
       "areas": [
         "AREA-4",
         "COMPACTOR"
-      ],
-      "start": {
-        "lat": 13.62892,
-        "lng": 123.19015
-      }
+      ]
     },
     {
       "id": "TRK-11",
@@ -112,11 +90,7 @@
       "current_load": 0,
       "areas": [
         "AREA-3"
-      ],
-      "start": {
-        "lat": 13.62084,
-        "lng": 123.20315
-      }
+      ]
     },
     {
       "id": "TRK-13",
@@ -126,11 +100,7 @@
       "current_load": 0,
       "areas": [
         "AREA-5"
-      ],
-      "start": {
-        "lat": 13.61945,
-        "lng": 123.18125
-      }
+      ]
     },
     {
       "id": "TRK-14",
@@ -140,11 +110,7 @@
       "current_load": 0,
       "areas": [
         "AREA-6"
-      ],
-      "start": {
-        "lat": 13.624704,
-        "lng": 123.184339
-      }
+      ]
     },
     {
       "id": "TRK-15",
@@ -154,11 +120,7 @@
       "current_load": 0,
       "areas": [
         "AREA-7"
-      ],
-      "start": {
-        "lat": 13.6145217,
-        "lng": 123.1927033
-      }
+      ]
     },
     {
       "id": "TRK-16",
@@ -189,11 +151,7 @@
       "areas": [
         "AREA-10",
         "AREA-15"
-      ],
-      "start": {
-        "lat": 13.62892,
-        "lng": 123.19015
-      }
+      ]
     },
     {
       "id": "TRK-19",
@@ -203,11 +161,7 @@
       "current_load": 0,
       "areas": [
         "AREA-11"
-      ],
-      "start": {
-        "lat": 13.6145217,
-        "lng": 123.1927033
-      }
+      ]
     },
     {
       "id": "TRK-20",
@@ -218,11 +172,7 @@
       "areas": [
         "AREA-13",
         "FLEET-CLEARING"
-      ],
-      "start": {
-        "lat": 13.61385,
-        "lng": 123.18392
-      }
+      ]
     }
   ],
   "bins": {
