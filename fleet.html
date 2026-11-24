@@ -97,7 +97,14 @@
     </section>
 
     <section class="group">
+      <h2>Routes</h2>
+      <div id="routeList" class="truck-list"></div>
+      <label class="check"><input type="checkbox" id="optTruckDelays" checked /> Random delays on routes (traffic, blocked bin, truck full)</label>
+    </section>
+
+    <section class="group">
       <h2>Trucks &amp; ETA</h2>
+      <p class="hint">Click a truck for trip details.</p>
       <div id="truckList" class="truck-list"></div>
     </section>
 
@@ -143,8 +150,41 @@
       <button id="btnRandomNow" class="small" type="button">&#127922; Random event now</button>
       <span class="hint" id="liveInfo">Works while playing or paused.</span>
     </div>
+    <div class="stage-toolbar live-bar edit-bar">
+      <label class="field inline"><span>Bins shown</span>
+        <select id="binLimit">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10" selected>10</option>
+        </select></label>
+      <strong id="binCount" class="bin-count" aria-live="polite"></strong>
+      <button id="btnAddBin" class="small" type="button" aria-pressed="false">&#65291; Add Bin</button>
+      <button id="btnCreateRoute" class="small" type="button" aria-pressed="false">&#9998; Create Route</button>
+      <span id="drawTools" class="draw-tools" hidden>
+        <button id="btnDrawFinish" class="small primary-inline" type="button">&#10003; Finish</button>
+        <button id="btnDrawUndo" class="small" type="button">Undo corner</button>
+        <button id="btnDrawCancel" class="small" type="button">Cancel</button>
+      </span>
+      <span class="hint" id="editInfo" role="status"></span>
+      <button id="btnUndoMove" class="small" type="button" hidden>Undo</button>
+    </div>
     <div class="view-card map-card">
       <canvas id="fleetCanvas"></canvas>
+      <div id="sidePanel" class="side-panel" role="region" aria-label="Details" hidden>
+        <div class="side-head">
+          <div><h3 id="sideTitle"></h3><p id="sideSub"></p></div>
+          <button id="sideClose" type="button" aria-label="Close details">&#x2715;</button>
+        </div>
+        <div id="sideBody" class="side-body"></div>
+        <div id="sideFoot" class="side-foot"></div>
+      </div>
     </div>
     <div class="legend" id="fleetLegend"></div>
   </section>

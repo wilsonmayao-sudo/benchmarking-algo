@@ -9,7 +9,8 @@
  *   depot / disposal   white round markers with warehouse / landfill icons + name
  *   bins         trash-bin icon on a tile coloured by status (green / yellow / red / gray),
  *                ring + tag in the colour of the truck it is assigned to
- *   trucks       truck icon in a white disc with the truck's colour, number badge, and an
+ *   trucks       parked at the depot: numbered dots in a block next to it; otherwise drawn exactly
+ *                where they are: truck icon in a white disc with the truck's colour, number badge, and an
  *                ETA chip underneath ("→ Bin 14 · 4 min 30 s"); BLOCKED trucks turn red
  *   ETA details  optional 2-line box: "Truck 2 → Bin 14: ETA 4 min 30 s" + route end, load
  *
@@ -19,6 +20,8 @@
 
 import { binColor } from '../sim/fleet/bins.js';
 import { truckXY } from '../sim/fleet/truck.js';
+import { numberOf, remainingPath } from '../sim/fleet/routes.js';
+import { pointInPolygon } from '../sim/fleet/routeAreas.js';
 import { fmtDuration } from '../sim/fleet/eta.js';
 
 /** Lucide icon paths (24×24), identical to the WebApp LiveFleetMap markers. */
@@ -80,14 +83,32 @@ export class FleetMapView {
     this.pickMode = false;
     this.onRoadPick = null;
     this.hoverEdge = -1;
+    /** Editing (see editor.js): 'none' | 'addBin' (click = new bin) | 'draw' (click = corner). */
+    this.editMode = 'none';
+    this.draft = [];            // corners of the area being drawn, map metres
+    this.draftPreview = null;   // finished outline while its form is open
+    this.newBinSpot = null;     // where the new bin will stand while its form is open
+    this.pickNumbers = null;    // Map bin id → number while bins are being chosen for a route
+    this.dragBin = null;        // { id, x, y } while a bin is being dragged
+    this.highlight = new Set(); // truck ids whose details are open
+    this.getVisibleBins = () => this.sim.bins;
+    this.onAddBin = this.onCloseDraft = this.onPickTruck = this.onPickBin = this.onPickRoute = this.onMoveBin = null;
     this._bindInteraction();
     new ResizeObserver(() => this.render()).observe(canvas);
   }
 
+  /**
+   * Show a (re)started run. The same map keeps its zoom and position.
+   * @returns {boolean} true when it is the map that was already shown
+   */
   setSimulation(sim) {
+    const same = Boolean(this.sim) && this.sim.world.name === sim.world.name &&
+      this.sim.graph.nodeCount === sim.graph.nodeCount;
     this.sim = sim;
     this.hoverEdge = -1;
-    this.resetView();
+    this.dragBin = null;
+    if (same) this.render(); else this.resetView();
+    return same;
   }
 
   setPickMode(on) {
@@ -95,6 +116,66 @@ export class FleetMapView {
     this.hoverEdge = -1;
     this.canvas.classList.toggle('picking', on);
     this.render();
+  }
+
+  setEditMode(mode) {
+    this.editMode = mode;
+    this.draft = [];
+    this.canvas.classList.toggle('editing', mode !== 'none');
+    this.render();
+  }
+
+  /** Canvas pixel position of a pointer event. */
+  _local(e) {
+    const r = this.canvas.getBoundingClientRect();
+    return { px: e.clientX - r.left, py: e.clientY - r.top };
+  }
+
+  truckAt(px, py) {
+    for (let i = (this._truckSpots || []).length - 1; i >= 0; i--) {
+      const s = this._truckSpots[i];
+      if (Math.hypot(px - s.x, py - s.y) < s.r) return s.id;
+    }
+    return null;
+  }
+
+  /** Closest visible bin under the pointer. */
+  binAt(px, py, r = 15) {
+    if (!this.sim || !this.tx) return null;
+    let best = null;
+    let bestD = r;
+    for (const b of this.getVisibleBins()) {
+      const d = Math.hypot(this.tx(b.x) - px, this.ty(b.y) - py);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    return best;
+  }
+
+  /** All visible bins standing on the same point as `bin`. */
+  binsAtSpot(bin) {
+    return this.getVisibleBins().filter((b) => Math.hypot(b.x - bin.x, b.y - bin.y) < 1);
+  }
+
+  _click(e) {
+    const { px, py } = this._local(e);
+    const x = this.wx(px), y = this.wy(py);
+    if (this.editMode === 'addBin') { this.onAddBin?.(x, y); return; }
+    if (this.editMode === 'draw') {
+      const first = this.draft[0];
+      const last = this.draft[this.draft.length - 1];
+      const near = (p, d) => p && Math.hypot(this.tx(p[0]) - px, this.ty(p[1]) - py) < d;
+      if (this.draft.length >= 3 && near(first, 14)) this.onCloseDraft?.();
+      else if (!near(last, 5)) { this.draft.push([x, y]); this.render(); }
+      return;
+    }
+    const truck = this.pickNumbers ? null : this.truckAt(px, py);
+    if (truck !== null) { this.onPickTruck?.(truck); return; }
+    const bin = this.binAt(px, py);
+    if (bin) { this.onPickBin?.(bin.id); return; }
+    if (this.pickNumbers) return;
+    for (const r of this.sim.routes.values()) {
+      if (pointInPolygon(x, y, r.poly)) { this.onPickRoute?.(r.id); return; }
+    }
   }
 
   /** Nearest road to a client-space point within `maxPx` screen pixels, or -1. */
@@ -122,20 +203,42 @@ export class FleetMapView {
   resetView() {
     this.zoom = 1;
     this.pan = { x: 0, y: 0 };
+    this.homeBounds = null; // worked out again on the next render
     this.render();
+  }
+
+  /**
+   * What the un-zoomed view shows. City road files reach far beyond the bins, so there it is
+   * the bins, depot, landfill and routes; other maps are shown whole.
+   */
+  _homeBounds() {
+    const { graph, world, bins, trucks, routes } = this.sim;
+    if (!world.geo) return graph.bounds();
+    const pts = [world.depot, world.disposal, ...trucks.map((t) => t.start)].map((n) => [graph.x[n], graph.y[n]]);
+    for (const b of bins) pts.push([b.x, b.y]);
+    for (const r of routes.values()) pts.push(...r.poly);
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
   }
 
   // ------------------------------------------------------------- transform
 
   _fit() {
-    const { graph } = this.sim;
-    const b = graph.bounds();
+    const b = this.homeBounds || (this.homeBounds = this._homeBounds());
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
-    const pad = 70;
-    const spanX = Math.max(1, b.maxX - b.minX);
-    const spanY = Math.max(1, b.maxY - b.minY);
-    const scale = Math.min((w - 2 * pad) / spanX, (h - 2 * pad) / spanY) * this.zoom;
+    const pad = Math.min(70, w * 0.06);
+    const least = this.sim.world.geo ? 2000 : 1; // a few close bins on a city map: still show 2 km
+    const spanX = Math.max(least, b.maxX - b.minX);
+    const spanY = Math.max(least, b.maxY - b.minY);
+    const base = Math.min((w - 2 * pad) / spanX, (h - 2 * pad) / spanY);
+    // The map got another size (details opened, full screen): a view the user has zoomed or moved
+    // keeps its scale; an untouched view is fitted again.
+    const touched = this.zoom !== 1 || this.pan.x !== 0 || this.pan.y !== 0;
+    if (touched && this._base && this._base !== base) this.zoom *= this._base / base;
+    this._base = base;
+    const scale = base * this.zoom;
     const cx = (b.minX + b.maxX) / 2;
     const cy = (b.minY + b.maxY) / 2;
     // y grows upwards in the world, downwards on screen
@@ -156,19 +259,51 @@ export class FleetMapView {
       const r = c.getBoundingClientRect();
       const mx = e.clientX - r.left - c.clientWidth / 2;
       const my = e.clientY - r.top - c.clientHeight / 2;
-      // zoom about the cursor
+      zoomAbout(mx, my, f);
+    }, { passive: false });
+
+    // zoom about a point given relative to the canvas centre
+    const zoomAbout = (mx, my, f) => {
       this.pan.x = mx - (mx - this.pan.x) * f;
       this.pan.y = my - (my - this.pan.y) * f;
       this.zoom *= f;
       this.render();
-    }, { passive: false });
+    };
+
+    const touches = new Map(); // two fingers = pinch zoom (phones)
+    let pinch = 0;
+    let pinched = false;
 
     let drag = null;
     c.addEventListener('pointerdown', (e) => {
-      drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY };
+      touches.set(e.pointerId, e);
+      if (touches.size === 2) {
+        const [a, b] = [...touches.values()];
+        pinch = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        pinched = true;
+        drag = null;
+        this.dragBin = null;
+        return;
+      }
+      pinched = false;
+      const { px, py } = this._local(e);
+      // Pressing on a bin may become a drag of that bin; a truck on top of it goes first.
+      const bin = this.sim && !this.pickMode && !this.pickNumbers && this.editMode === 'none' && this.truckAt(px, py) === null ? this.binAt(px, py) : null;
+      drag = { bin: bin?.id ?? null, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY };
       c.setPointerCapture(e.pointerId);
     });
     c.addEventListener('pointermove', (e) => {
+      if (touches.has(e.pointerId)) touches.set(e.pointerId, e);
+      if (touches.size === 2) {
+        const [a, b] = [...touches.values()];
+        const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        const r = c.getBoundingClientRect();
+        if (pinch > 0 && d > 0) {
+          zoomAbout((a.clientX + b.clientX) / 2 - r.left - c.clientWidth / 2, (a.clientY + b.clientY) / 2 - r.top - c.clientHeight / 2, d / pinch);
+        }
+        pinch = d;
+        return;
+      }
       if (!drag) {
         if (this.pickMode) {
           const hit = this.edgeAt(e.clientX, e.clientY);
@@ -176,15 +311,32 @@ export class FleetMapView {
         }
         return;
       }
+      if (drag.bin !== null && this.sim.binsById.has(drag.bin)) {
+        if (!this.dragBin && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 5) return;
+        const { px, py } = this._local(e);
+        this.dragBin = { id: drag.bin, x: this.wx(px), y: this.wy(py) };
+        this.render();
+        return;
+      }
       this.pan.x += e.clientX - drag.x;
       this.pan.y += e.clientY - drag.y;
       drag = { ...drag, x: e.clientX, y: e.clientY };
       this.render();
     });
+    const forget = (e) => { touches.delete(e.pointerId); };
+    c.addEventListener('pointercancel', (e) => { forget(e); drag = null; this.dragBin = null; this.render(); });
     c.addEventListener('pointerup', (e) => {
+      forget(e);
       // A click (moved < 5 px) in pick mode places an event; anything longer was a pan.
       const isClick = drag && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 5;
       drag = null;
+      if (this.dragBin) {
+        const d = this.dragBin;
+        this.dragBin = null;
+        if (this.sim.binsById.has(d.id)) this.onMoveBin?.(d.id, d.x, d.y);
+        return;
+      }
+      if (isClick && !pinched && this.sim && !this.pickMode) { this._click(e); return; }
       if (isClick && this.pickMode && this.onRoadPick) {
         const hit = this.edgeAt(e.clientX, e.clientY);
         if (hit >= 0) this.onRoadPick(hit);
@@ -193,7 +345,11 @@ export class FleetMapView {
     c.addEventListener('pointerleave', () => {
       if (this.hoverEdge !== -1) { this.hoverEdge = -1; this.render(); }
     });
-    c.addEventListener('dblclick', () => { if (!this.pickMode) this.resetView(); });
+    c.addEventListener('dblclick', (e) => {
+      if (this.editMode === 'draw') { if (this.draft.length >= 3) this.onCloseDraft?.(); return; }
+      const { px, py } = this._local(e);
+      if (!this.pickMode && this.editMode === 'none' && this.truckAt(px, py) === null && !this.binAt(px, py)) this.resetView();
+    });
   }
 
   // ---------------------------------------------------------------- render
@@ -210,16 +366,19 @@ export class FleetMapView {
     const ctx = this.ctx;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    if (!this.sim) return;
+    if (!this.sim || w < 50 || h < 50) return;
 
     this._fit();
     const street = this.options.basemap && this.sim.world.geo;
     if (street) this._drawBasemap(ctx, w, h, dpr);
     this._drawRoads(ctx, street);
+    this._drawAreas(ctx);
     if (this.options.paths) this._drawPaths(ctx);
     this._drawSites(ctx);
     this._drawBins(ctx);
     this._drawTrucks(ctx);
+    this._drawSpotBadges(ctx);
+    this._drawDraft(ctx);
     if (this.pickMode && this.hoverEdge >= 0) this._drawHover(ctx);
     if (street) this._drawAttribution(ctx, w, h);
   }
@@ -295,6 +454,56 @@ export class FleetMapView {
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, w - 5, h - 9);
+  }
+
+  // ----------------------------------------------------------- route areas
+
+  _outline(ctx, poly, close = true) {
+    ctx.beginPath();
+    poly.forEach(([x, y], i) => (i ? ctx.lineTo(this.tx(x), this.ty(y)) : ctx.moveTo(this.tx(x), this.ty(y))));
+    if (close) ctx.closePath();
+  }
+
+  _drawAreas(ctx) {
+    for (const r of this.sim.routes.values()) {
+      this._outline(ctx, r.poly);
+      ctx.fillStyle = r.color;
+      ctx.globalAlpha = 0.2;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = r.color;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      const top = r.poly.reduce((a, b) => (b[1] > a[1] ? b : a));
+      this._tag(ctx, r.name, this.tx(top[0]), this.ty(top[1]) - 12, '#ffffff');
+    }
+  }
+
+  _drawDraft(ctx) {
+    const poly = this.draftPreview || this.draft;
+    if (poly.length) {
+      this._outline(ctx, poly, Boolean(this.draftPreview));
+      if (poly.length > 2) { ctx.fillStyle = 'rgba(253, 224, 71, 0.25)'; ctx.fill(); }
+      ctx.strokeStyle = '#a16207';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([8, 5]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      poly.forEach(([x, y], i) => {
+        ctx.beginPath();
+        ctx.arc(this.tx(x), this.ty(y), i === 0 ? 8 : 5, 0, Math.PI * 2);
+        ctx.fillStyle = i === 0 ? '#fde047' : '#ffffff';
+        ctx.fill();
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+    }
+    if (this.newBinSpot) {
+      const x = this.tx(this.newBinSpot.x), y = this.ty(this.newBinSpot.y);
+      this._marker(ctx, 'bin', x, y, 14, '#ca8a04', '#0f172a', 4);
+      this._tag(ctx, 'new bin', x, y - 26, '#fde047');
+    }
   }
 
   // ----------------------------------------------------------------- icons
@@ -399,9 +608,25 @@ export class FleetMapView {
     const { graph } = this.sim;
     const { tx, ty } = this;
     this.sim.trucks.forEach((truck, i) => {
-      if (truck.arcs.length === 0) return;
+      if (truck.arcs.length === 0 && !truck.routeId) return;
       const off = ((i % 5) - 2) * 2; // small, bounded offset so overlapping routes stay distinguishable
       const p = truckXY(graph, truck);
+      // Route trucks: every later stop as a thinner dashed line.
+      if (truck.routeId) {
+        const later = remainingPath(this.sim, truck);
+        if (later.length) {
+          const s = graph.adjTail[later[0]];
+          ctx.beginPath();
+          ctx.moveTo(tx(graph.x[s]) + off, ty(graph.y[s]) + off);
+          for (const a of later) ctx.lineTo(tx(graph.x[graph.adjNeighbor[a]]) + off, ty(graph.y[graph.adjNeighbor[a]]) + off);
+          ctx.strokeStyle = truck.color;
+          ctx.lineWidth = 2.5;
+          ctx.setLineDash([6, 4]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+      if (truck.arcs.length === 0) return;
       ctx.beginPath();
       ctx.moveTo(tx(p.x) + off, ty(p.y) + off);
       for (const a of truck.arcs) {
@@ -422,7 +647,7 @@ export class FleetMapView {
   _drawSites(ctx) {
     const { graph, world } = this.sim;
     const { tx, ty } = this;
-    const site = (node, kind, label) => {
+    const site = (node, kind, label, labelDy) => {
       const x = tx(graph.x[node]), y = ty(graph.y[node]);
       // outer emerald halo = facility (as on the WebApp map)
       ctx.beginPath();
@@ -431,27 +656,38 @@ export class FleetMapView {
       ctx.lineWidth = 3;
       ctx.stroke();
       this._marker(ctx, kind, x, y, 16, '#059669', '#065f46', 3);
-      this._tag(ctx, label, x, y + 32, '#6ee7b7');
+      this._tag(ctx, label, x, y + labelDy, '#6ee7b7');
     };
-    if (world.disposal !== world.depot) site(world.disposal, 'landfill', world.disposalName || 'DISPOSAL');
+    if (world.disposal !== world.depot) site(world.disposal, 'landfill', world.disposalName || 'DISPOSAL', -32); // name above, the depot's below
     site(world.depot, 'depot', world.disposal === world.depot
       ? `${world.depotName || 'DEPOT'} / DISPOSAL`
-      : world.depotName || 'DEPOT');
+      : world.depotName || 'DEPOT', 32);
   }
 
   _drawBins(ctx) {
-    const { graph, world, trucks } = this.sim;
+    const { world, trucks } = this.sim;
     const { tx, ty } = this;
     const th = world.settings.fill_thresholds;
     const truckById = new Map(trucks.map((t) => [t.id, t]));
 
-    for (const bin of this.sim.bins) {
-      const x = tx(graph.x[bin.node]), y = ty(graph.y[bin.node]);
+    // Bins on the same point are drawn on top of each other: count and number them.
+    const spots = new Map();
+    for (const bin of this.getVisibleBins()) {
+      const key = `${Math.round(bin.x)},${Math.round(bin.y)}`;
+      if (!spots.has(key)) spots.set(key, []);
+      spots.get(key).push(bin);
+    }
+    this._spots = [...spots.values()];
+    for (const bin of this.getVisibleBins()) {
+      const moved = this.dragBin?.id === bin.id ? this.dragBin : bin;
+      const x = tx(moved.x), y = ty(moved.y);
+      const route = bin.routeId ? this.sim.routes.get(bin.routeId) : null;
       const s = 11;
       // tile coloured by status, with a trash-bin icon so bins never look like trucks
       ctx.fillStyle = binColor(bin, th);
-      ctx.strokeStyle = '#0f172a';
-      ctx.lineWidth = 1.5;
+      // outline: the route's colour, or grey = Unassigned (not in any route)
+      ctx.strokeStyle = route ? route.color : '#9ca3af';
+      ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.roundRect(x - s, y - s, 2 * s, 2 * s, 5);
       ctx.fill();
@@ -481,32 +717,74 @@ export class FleetMapView {
 
       if (this.options.binLabels) {
         const fill = bin.state === 'collected' ? `${bin.fillAtPickup}% → 0%` : `${Math.round(bin.fill)}%`;
-        this._tag(ctx, `${bin.id} · ${fill}`, x, y - 25, COLORS.text);
+        this._tag(ctx, `${bin.custom ? bin.name : bin.id} · ${fill}`, x, y - 25, COLORS.text);
         const who = bin.state === 'collected' ? `done by ${truckById.get(bin.collectedBy)?.name.replace('Truck ', 'T') ?? '?'}`
           : bin.state === 'pending' ? 'PENDING'
           : bin.state === 'missed' ? 'MISSED'
           : owner ? owner.name.replace('Truck ', 'T') : '';
+        if (!route && bin.state !== 'collected') this._tag(ctx, 'Unassigned', x, y + 42, COLORS.textDim);
         if (who) this._tag(ctx, who, x, y + 25, owner ? owner.color : bin.state === 'pending' ? '#eab308' : COLORS.textDim);
       }
     }
   }
 
+  /** "3", "1–27" (stop numbers on a route) or "×27" (several bins on one point). */
+  _drawSpotBadges(ctx) {
+    const { tx, ty } = this;
+    for (const list of this._spots || []) {
+      const live = list.filter((b) => this.dragBin?.id !== b.id);
+      if (!live.length) continue;
+      const nums = live.map((b) => {
+        if (this.pickNumbers) return this.pickNumbers.get(b.id);
+        const r = b.routeId && this.sim.routes.get(b.routeId);
+        return r ? numberOf(r, b.id) : undefined;
+      }).filter((n) => n !== undefined).sort((a, b) => a - b);
+      let text = live.length > 1 ? `×${live.length}` : '';
+      if (nums.length === 1) text = live.length > 1 ? `${nums[0]} · ×${live.length}` : String(nums[0]);
+      else if (nums.length) text = nums[nums.length - 1] - nums[0] === nums.length - 1 ? `${nums[0]}–${nums[nums.length - 1]}` : `${nums.length} stops`;
+      if (!text) continue;
+      const x = tx(live[0].x) - 11, y = ty(live[0].y) - 12;
+      ctx.font = 'bold 12px "Segoe UI", sans-serif';
+      const w = Math.max(18, ctx.measureText(text).width + 10);
+      ctx.fillStyle = nums.length ? '#1d4ed8' : '#334155';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(x - w / 2, y - 9, w, 18, 9);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x, y + 0.5);
+    }
+  }
+
   _drawTrucks(ctx) {
-    const { graph } = this.sim;
+    const { graph, world, trucks } = this.sim;
     const { tx, ty } = this;
     const nowT = this.sim.time;
+    this._truckSpots = []; // where each truck was drawn, for clicks
 
-    // Group trucks standing at the same spot so they sit side by side instead of on top.
-    const stack = new Map();
-    this.sim.trucks.forEach((truck) => {
+    const isParked = (t) => t.node === world.depot && t.arcPos === 0 && (t.status === 'idle' || t.status === 'driving');
+    this._drawParked(ctx, trucks.filter(isParked));
+
+    // Every other truck is drawn where it really is. Trucks on the same spot get a few pixels
+    // of shift and their labels go below each other, so none of them seems to jump.
+    // The truck whose details are open comes last, on top of the others.
+    const seen = [];
+    const open = (t) => this.highlight.has(t.id);
+    const moving = trucks.filter((t) => !isParked(t));
+    [...moving.filter((t) => !open(t)), ...moving.filter(open)].forEach((truck) => {
       const p = truckXY(graph, truck);
-      const y = ty(p.y);
-      const key = `${Math.round(tx(p.x) / 8)},${Math.round(y / 8)}`;
-      const k = stack.get(key) || 0;
-      stack.set(key, k + 1);
-      const x = tx(p.x) + k * 34;
+      const px = tx(p.x), py = ty(p.y);
+      const k = seen.filter((s) => Math.hypot(s.x - px, s.y - py) < 14).length;
+      seen.push({ x: px, y: py });
+      const x = px + Math.min(k, 3) * 7, y = py - Math.min(k, 3) * 7;
+      this._truckSpots.push({ id: truck.id, x, y, r: 20 });
       const blocked = truck.status === 'blocked';
       const accent = blocked ? '#ef4444' : truck.color;
+      if (open(truck)) this._halo(ctx, x, y, 23);
 
       // truck icon in a white disc with a ring in the truck's colour
       this._marker(ctx, 'truck', x, y, 15, accent, '#0f172a', 4);
@@ -525,13 +803,62 @@ export class FleetMapView {
       ctx.textBaseline = 'middle';
       ctx.fillText(blocked ? '!' : truckNumber(truck), x + 12, y - 11.5);
 
-      // ETA chip under the truck — always shown
-      this._chip(ctx, etaShort(truck, nowT), x, y + 27, accent);
+      // ETA chip under the truck; while one truck or route is open, the others only show their name
+      const brief = this.highlight.size > 0 && !open(truck);
+      if (k < 4) this._chip(ctx, brief ? truckTag(truck) : etaShort(truck, nowT), px, py + 27 + k * 19, accent);
 
       // optional detailed ETA box to the right
       if (this.options.etaLabels) {
         this._labelBox(ctx, etaLines(truck, nowT), x + 24, y - 16 + k * 40, accent);
       }
+    });
+  }
+
+  /** Yellow ring around the truck whose details are open. */
+  _halo(ctx, x, y, r) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = '#facc15';
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  /** Trucks waiting at the depot: numbered dots in a tidy block next to it. */
+  _drawParked(ctx, parked) {
+    if (parked.length === 0) return;
+    const { graph, world } = this.sim;
+    const step = 22;
+    const cols = Math.min(7, parked.length);
+    const rows = Math.ceil(parked.length / cols);
+    const x = this.tx(graph.x[world.depot]);
+    const y = this.ty(graph.y[world.depot]);
+    const h = rows * step + 8;
+    const top = y + 46 + h < this.canvas.clientHeight ? y + 46 : y - 30 - h; // below the depot's name, or above it
+    const left = x - (cols * step) / 2;
+    ctx.fillStyle = COLORS.labelBg;
+    ctx.beginPath();
+    ctx.roundRect(left - 5, top, cols * step + 10, h, 7);
+    ctx.fill();
+    parked.forEach((truck, i) => {
+      const cx = left + (i % cols) * step + step / 2;
+      const cy = top + 4 + Math.floor(i / cols) * step + step / 2;
+      this._truckSpots.push({ id: truck.id, x: cx, y: cy, r: 11 });
+      if (this.highlight.has(truck.id)) this._halo(ctx, cx, cy, 11);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+      ctx.fillStyle = truck.color;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+      ctx.fillStyle = '#0f172a';
+      ctx.font = 'bold 10px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(truckNumber(truck), cx, cy + 0.5);
     });
   }
 

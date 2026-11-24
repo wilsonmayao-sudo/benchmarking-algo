@@ -40,6 +40,14 @@ export function createTruckState(cfg) {
     disposalTrips: 0,
     reroutes: 0,
     blockedCount: 0,
+    // --- route + trip details ---
+    routeId: null,            // area-locked route this truck works on (null = free)
+    phase: '',                // route truck: toArea | area | toLandfill | toDepot | done (see routes.js)
+    lastStop: -1,             // corner of the last bin it emptied
+    holdUntil: 0,             // standing still until then (delay)
+    serviceProblem: '',       // why the current stop takes longer ('' = normal)
+    trip: null,               // { startedAt, plannedEnd, lastEnd, collected, finishedAt, reason }
+    timeline: [],             // [{ time, seq, text }] plain-language events
     pendingEtaCheck: null,    // {binId, predictedAt} — measures ETA accuracy
   };
 }

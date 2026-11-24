@@ -29,6 +29,8 @@
  *   fleet/bins.js         bin state + colour status
  *   fleet/dispatcher.js   assignment, capacity handoff, pending queue
  *   fleet/eta.js          ETA to next stop / end of route
+ *   fleet/routes.js       bin edits + truck routes locked to an area (strict)
+ *   fleet/trip.js         plain-language trip details (status, next stop, delay, events)
  *   metrics.js            run summary + CSV / JSON export
  */
 
@@ -40,6 +42,11 @@ import { createBinState } from './fleet/bins.js';
 import { initialAssignment, handoff, assignPending } from './fleet/dispatcher.js';
 import { computeEta, plannedOrder, fmtClock } from './fleet/eta.js';
 import { summarize } from './metrics.js';
+import { mulberry32 } from '../core/rng.js';
+import {
+  routerFor, arcAllowed, note, planNextOnRoute, blockedReason, delayAfterPickup, delayAtBin, delayAtLandfill,
+  OUTSIDE_MSG, routeOrder, stopTime,
+} from './fleet/routes.js';
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
@@ -53,9 +60,23 @@ export class Simulation {
     this.events = new EventQueue(world.events);
 
     this.bins = world.bins.map(createBinState);
+    for (const b of this.bins) {
+      b.x = this.graph.x[b.node];
+      b.y = this.graph.y[b.node];
+      b.homeNode = b.node;   // nearest corner; `node` may move to a corner inside its route area
+      b.type = b.type || 'General';
+      b.routeId = null;      // null = Unassigned (not in any route area)
+    }
     this.binsById = new Map(this.bins.map((b) => [b.id, b]));
     this.trucks = world.trucks.map(createTruckState);
     this.pending = [];       // bin ids waiting for a truck
+
+    this.routes = new Map(); // id → { id, name, color, truckIds, poly, area, router }
+    this.truckDelays = true; // random delays for trucks on a route
+    this.delayRng = mulberry32((world.seed + 977) >>> 0);
+    this.noteSeq = 0;
+    this.editing = false;    // an edit is running: work changed, so the plan moves with it
+    this.inRoadEvent = false;
 
     this.time = 0;
     this.finished = false;
@@ -176,6 +197,9 @@ export class Simulation {
     this.metrics.eventsApplied++;
 
     if (result.changed) {
+      this.inRoadEvent = true; // ETA changes from here on are delays, not changes of plan
+      const endBefore = this.trucks.map((t) => (t.trip && t.status !== 'idle' ? t.trip.lastEnd : null));
+      const cause = ev.type === 'ROAD_CLOSURE' ? 'road closed' : 'heavy traffic';
       // Which trucks must re-plan?
       //  • closure / extra delay: only trucks whose remaining route uses the road
       //  • reopen / delay cleared: every driving truck (a shorter route may exist now)
@@ -200,6 +224,14 @@ export class Simulation {
       // A road change can make a pending bin reachable.
       this.wakeTrucks(assignPending(this));
       this.refreshAllEta(`${ev.type} on ${edgeName}`);
+      this.inRoadEvent = false;
+      this.trucks.forEach((truck, i) => {
+        if (endBefore[i] === null || truck.status === 'blocked') return;
+        const extra = truck.trip.lastEnd - endBefore[i];
+        if (extra < 60) return;
+        truck.trip.reason = cause;
+        note(this, truck, `Delayed ${Math.round(extra / 60)} min: ${cause}`);
+      });
     }
 
     const entry = {
@@ -228,9 +260,18 @@ export class Simulation {
    * @returns {'same'|'rerouted'|'blocked'}
    */
   replan(truck, why) {
+    if (truck.target.kind === 'entry') { // on the way to its area: another way in may be better now
+      const before = truck.arcs.slice();
+      this.planNext(truck);
+      if (truck.status === 'blocked') return 'blocked';
+      if (truck.arcs.length === before.length && truck.arcs.every((a, i) => a === before[i])) return 'same';
+      truck.reroutes++;
+      this.metrics.reroutes++;
+      return 'rerouted';
+    }
     const origin = rerouteOrigin(this.graph, truck);
     const locked = lockedArc(truck);
-    const res = this.router.findPath(origin, truck.target.node, 'reroute');
+    const res = routerFor(this, truck).findPath(origin, truck.target.node, 'reroute');
 
     if (res.found) {
       const arcs = locked !== null ? [locked, ...res.arcs] : res.arcs;
@@ -272,6 +313,10 @@ export class Simulation {
     if (!alreadyBlocked) {
       truck.blockedCount++;
       this.metrics.blockedIncidents++;
+      const why = truck.routeId ? blockedReason(this, truck) : 'Stopped: road closed';
+      if (truck.trip) truck.trip.reason = why.replace('Stopped: ', '');
+      note(this, truck, why);
+      if (why === OUTSIDE_MSG) this.log('warning', `${truck.name} — ${OUTSIDE_MSG}`);
       this.log('warning', `⚠ ${truck.name} BLOCKED: ${reason}. Waiting for a road to reopen.`, { truck: truck.id });
     }
   }
@@ -282,6 +327,7 @@ export class Simulation {
 
   /** Choose the truck's next target and route to it (see header). */
   planNext(truck) {
+    if (truck.routeId) { planNextOnRoute(this, truck); return; }
     const s = this.world.settings;
 
     if (truck.mode === 'full') {
@@ -318,12 +364,15 @@ export class Simulation {
     // (If the truck is already at the disposal site the route is empty and it unloads
     //  on arrival straight away.)
     const at = rerouteOrigin(this.graph, truck);
+    const midRoad = lockedArc(truck) !== null; // finish that road first, a truck never stops (or jumps) on it
     if (truck.load > 0) {
       truck.mode = 'final';
       this.routeTo(truck, { kind: 'disposal', node: this.world.disposal }, 'route');
-    } else if (s.return_to_depot && at !== this.world.depot) {
+    } else if (s.return_to_depot && (at !== this.world.depot || midRoad)) {
       truck.mode = 'final';
       this.routeTo(truck, { kind: 'depot', node: this.world.depot }, 'route');
+    } else if (midRoad) {
+      this.routeTo(truck, { kind: 'stop', node: at }, 'route');
     } else {
       this.goIdle(truck);
     }
@@ -337,8 +386,9 @@ export class Simulation {
   /** Target `skipId` is unreachable — visit another queued bin that fits, if any is reachable. */
   routeToReachableBin(truck, skipId, purpose) {
     const from = rerouteOrigin(this.graph, truck);
-    const order = plannedOrder(this.graph, truck.queue.filter((id) => id !== skipId), this.binsById, from,
-      this.world.settings.visit_order);
+    const others = truck.queue.filter((id) => id !== skipId);
+    const order = truck.routeId ? routeOrder(this, truck, others, from)
+      : plannedOrder(this.graph, others, this.binsById, from, this.world.settings.visit_order);
     for (const id of order) {
       const bin = this.binsById.get(id);
       if (truck.load + bin.load > truck.maxCapacity) continue;
@@ -357,7 +407,7 @@ export class Simulation {
   routeTo(truck, target, purpose, quiet = false) {
     const origin = rerouteOrigin(this.graph, truck);
     const locked = lockedArc(truck);
-    const res = this.router.findPath(origin, target.node, purpose);
+    const res = routerFor(this, truck).findPath(origin, target.node, purpose);
     if (!res.found) {
       if (!quiet) this.block(truck, `no route to ${this.targetName(target)}`);
       return false;
@@ -416,9 +466,27 @@ export class Simulation {
       const moving = truck.status === 'driving' || (truck.status === 'blocked' && truck.arcs.length > 0);
       if (!moving) break;
 
+      // Waiting out a delay (heavy traffic, …): stand still.
+      if (truck.holdUntil > clock && truck.arcPos === 0) {
+        if (truck.holdUntil >= tEnd) break;
+        clock = truck.holdUntil;
+        continue;
+      }
+
       if (truck.arcs.length === 0) {
         if (truck.status === 'blocked') break;
         this.arrive(truck, clock);
+        continue;
+      }
+
+      // STRICT RULE: never enter a road outside the truck's route area.
+      if (truck.arcPos === 0 && !arcAllowed(this, truck, truck.arcs[0])) {
+        truck.arcs = [];
+        this.log('warning', `${truck.name} — ${OUTSIDE_MSG}`);
+        note(this, truck, OUTSIDE_MSG);
+        this.planNext(truck);
+        this.refreshEta(truck);
+        if (truck.status === 'blocked') break;
         continue;
       }
 
@@ -452,15 +520,31 @@ export class Simulation {
 
   arrive(truck, clock) {
     const target = truck.target;
-    truck.node = target.node;
+    if (truck.node !== target.node) { // never jump: if it is not really there yet, drive there
+      this.planNext(truck);
+      this.refreshEta(truck);
+      return;
+    }
     if (target.kind === 'bin') {
       const bin = this.binsById.get(target.binId);
+      // STRICT RULE: never collect a bin of another route (or, on a route, a bin of none).
+      if (bin.routeId !== truck.routeId) {
+        this.log('warning', `${truck.name} — ${OUTSIDE_MSG}: ${bin.name}`);
+        note(this, truck, `${OUTSIDE_MSG} (${bin.name})`);
+        truck.queue = truck.queue.filter((id) => id !== bin.id);
+        if (bin.truckId === truck.id) { bin.truckId = null; bin.state = 'pending'; }
+        truck.target = null;
+        this.planNext(truck);
+        this.refreshEta(truck);
+        return;
+      }
       if (truck.pendingEtaCheck && truck.pendingEtaCheck.binId === bin.id) {
         this.metrics.etaErrors.push(Math.abs(clock - truck.pendingEtaCheck.predictedAt));
       }
       truck.pendingEtaCheck = null;
       truck.status = 'servicing';
-      truck.busyUntil = clock + bin.serviceTime;
+      truck.busyUntil = clock + (truck.routeId ? stopTime(bin.node, truck.lastStop) + delayAtBin(this, truck, bin) : bin.serviceTime);
+      if (truck.routeId) this.refreshEta(truck);
     } else if (target.kind === 'disposal') {
       this.startUnloading(truck, clock);
     } else {
@@ -473,6 +557,10 @@ export class Simulation {
     truck.status = 'unloading';
     truck.busyUntil = clock + this.world.settings.unload_time_s;
     truck.target = { kind: 'disposal', node: this.world.disposal };
+    if (truck.routeId) {
+      truck.busyUntil += delayAtLandfill(this, truck);
+      this.refreshEta(truck);
+    }
   }
 
   finishService(truck, clock) {
@@ -484,11 +572,16 @@ export class Simulation {
     bin.fill = 0;
     truck.load += bin.load;
     truck.collected++;
+    truck.lastStop = bin.node;
+    if (truck.trip) truck.trip.collected++;
+    note(this, truck, `Picked up ${bin.name}`);
+    truck.serviceProblem = '';
     truck.queue = truck.queue.filter((id) => id !== bin.id);
     truck.status = 'driving';
     truck.target = null;
     this.log('collect', `${truck.name} collected ${bin.name} (+${Math.round(bin.load)} kg, load ` +
       `${Math.round(truck.load)}/${truck.maxCapacity} kg)`);
+    if (truck.routeId) delayAfterPickup(this, truck);
     this.planNext(truck);
     this.refreshEta(truck);
   }
@@ -496,10 +589,13 @@ export class Simulation {
   finishUnloading(truck, clock) {
     const unloaded = truck.load;
     truck.load = 0;
+    truck.lastStop = -1; // coming back to the same place is a new stop
     truck.disposalTrips++;
     truck.mode = 'collect';
     truck.status = 'driving';
+    truck.serviceProblem = '';
     this.log('info', `${truck.name} unloaded ${Math.round(unloaded)} kg at the disposal site — capacity free`);
+    note(this, truck, 'Unloaded at the landfill');
     // A truck that frees up takes pending bins.
     const touched = assignPending(this);
     this.planNext(truck);
@@ -513,11 +609,42 @@ export class Simulation {
 
   refreshEta(truck) {
     truck.eta = computeEta(this, truck);
+    this.trackTrip(truck);
     this.metrics.etaRecalcs++;
     // Remember the first prediction for this leg to measure ETA accuracy on arrival.
     if (!truck.pendingEtaCheck && truck.status === 'driving' && truck.target && truck.target.kind === 'bin') {
       truck.pendingEtaCheck = { binId: truck.target.binId, predictedAt: truck.eta.nextAt };
     }
+  }
+
+  /**
+   * Keep the truck's trip (planned vs. expected finish) in step with its ETA. A route truck's
+   * plan is fixed when it starts and moves only when its work is edited. Other trucks get new
+   * work from the dispatcher all the time, so for them only road events count as delay.
+   */
+  trackTrip(truck) {
+    const end = truck.eta.endAt;
+    const idle = truck.status === 'idle';
+    const t = truck.trip;
+    const going = truck.routeId && truck.phase === 'toArea' ? `: driving to ${this.routes.get(truck.routeId).name}` : '';
+    if (!t) {
+      if (idle || truck.queue.length === 0) return;
+      truck.trip = { startedAt: this.time, plannedEnd: end, lastEnd: end, collected: 0, finishedAt: null, reason: '' };
+      note(this, truck, `Route started${going}`);
+      return;
+    }
+    if (idle && t.finishedAt !== null) return;
+    if (!Number.isFinite(end)) return; // blocked: not known yet
+    if (!Number.isFinite(t.plannedEnd)) t.plannedEnd = t.lastEnd = end; // was blocked when it started
+    if (idle) {
+      t.finishedAt = this.time;
+      note(this, truck, `Route finished${truck.node === this.world.depot ? ': back at the depot' : ''}`);
+    } else if (t.finishedAt !== null) {
+      t.finishedAt = null;
+      note(this, truck, `New bins to collect${going}`);
+    }
+    if (this.editing || (!truck.routeId && !this.inRoadEvent)) t.plannedEnd += end - t.lastEnd;
+    t.lastEnd = end;
   }
 
   refreshAllEta() {

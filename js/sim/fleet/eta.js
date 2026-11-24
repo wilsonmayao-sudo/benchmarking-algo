@@ -21,6 +21,7 @@
  */
 
 import { busyRemaining, remainingRouteTime } from './truck.js';
+import { entryNode, routeOrder, routerFor, stopTime } from './routes.js';
 
 /**
  * Order in which a truck will visit its queue, starting from node `from`.
@@ -52,7 +53,8 @@ export function plannedOrder(graph, queue, binsById, from, visitOrder) {
  * @returns {{nextAt:number, endAt:number, label:string, targetName:string, computedAt:number}|null}
  */
 export function computeEta(sim, truck) {
-  const { graph, road, router, binsById, world } = sim;
+  const { graph, road, binsById, world } = sim;
+  const router = routerFor(sim, truck);
   const now = sim.time;
   const s = world.settings;
 
@@ -65,17 +67,77 @@ export function computeEta(sim, truck) {
 
   // ---- current leg ----
   let t = now + busyRemaining(truck, now);
+  if (truck.status === 'driving' && truck.holdUntil > now) t += truck.holdUntil - now;
   if (truck.status === 'driving') t += remainingRouteTime(graph, road, truck);
   const target = truck.target;
   const nextAt = t;
   const targetName = target.kind === 'bin' ? binsById.get(target.binId).name
-    : target.kind === 'disposal' ? 'Disposal' : 'Depot';
+    : target.kind === 'entry' ? sim.routes.get(truck.routeId)?.name ?? 'Route area'
+    : target.kind === 'stop' ? 'End of route'
+    : target.kind === 'disposal' ? 'Landfill' : 'Depot';
 
   // ---- look-ahead to the end of the route ----
   let end = nextAt;
   let load = truck.load;
   let at = target.node;
   const legTime = (from, to) => (from === to ? 0 : router.legCost(from, to, 'eta') / truck.speed);
+
+  if (truck.routeId) {
+    // Route truck (trip: see routes.js): → area, about 2 min per stop on roads inside it, landfill
+    // when full and at the end, then back to the depot.
+    const route = sim.routes.get(truck.routeId);
+    const legBy = (r, from, to) => (from === to ? 0 : r.legCost(from, to, 'eta') / truck.speed);
+    const drive = (to) => { // on any road; a leg that is closed right now is left out
+      const leg = legBy(sim.router, at, to);
+      if (leg === Infinity) return false;
+      end += leg;
+      at = to;
+      return true;
+    };
+    let lastStop = truck.lastStop; // corner of the last bin, as Simulation keeps it
+    const unload = () => {
+      if (drive(world.disposal)) end += s.unload_time_s;
+      load = 0;
+      lastStop = -1;
+    };
+
+    if (target.kind === 'bin') {
+      if (truck.status !== 'servicing') end += stopTime(at, lastStop);
+      load += binsById.get(target.binId).load;
+      lastStop = at;
+    } else if (target.kind === 'disposal') {
+      if (truck.status !== 'unloading') end += s.unload_time_s;
+      load = 0;
+      lastStop = -1;
+    }
+
+    let rest = routeOrder(sim, truck, truck.queue.filter((id) => id !== target.binId), at);
+    while (rest.length > 0) {
+      const b = binsById.get(rest[0]);
+      if (b.load > truck.maxCapacity) { rest.shift(); continue; } // never fits: skipped
+      if (load + b.load > truck.maxCapacity) {
+        unload();
+        rest = routeOrder(sim, truck, rest, at); // from here on it plans from the landfill
+        continue;
+      }
+      if (!route.area.inCore[at]) {
+        const entry = entryNode(sim, route, at);
+        if (entry < 0 || !drive(entry)) break;
+        rest = routeOrder(sim, truck, rest, at); // … and from where it drives in
+        continue;
+      }
+      rest.shift();
+      const leg = legBy(route.router, at, b.node);
+      if (leg === Infinity) continue; // waits for a road to reopen
+      end += leg + stopTime(b.node, lastStop);
+      lastStop = b.node;
+      load += b.load;
+      at = b.node;
+    }
+    if (load > 0) unload();
+    if (s.return_to_depot) drive(world.depot);
+    return { nextAt, endAt: end, targetName, label: `${truck.name} → ${targetName}`, computedAt: now };
+  }
 
   if (target.kind === 'bin') {
     const bin = binsById.get(target.binId);

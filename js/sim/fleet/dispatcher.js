@@ -25,7 +25,7 @@ import { rerouteOrigin, freeCapacity, busyRemaining } from './truck.js';
 
 /** Can this truck accept new bins at all right now? */
 export function isAvailable(truck) {
-  return truck.status !== 'blocked' && truck.mode !== 'full';
+  return !truck.routeId && truck.status !== 'blocked' && truck.mode !== 'full';
 }
 
 /**

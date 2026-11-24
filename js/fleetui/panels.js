@@ -11,11 +11,11 @@ import { fmtDuration } from '../sim/fleet/eta.js';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export function renderTruckList(el, sim) {
-  el.innerHTML = sim.trucks.map((t) => {
+  const html = sim.trucks.map((t) => {
     const [l1, l2] = etaLines(t, sim.time);
     const pct = Math.min(100, (t.load / t.maxCapacity) * 100);
     return `
-      <div class="truck-card ${t.status === 'blocked' ? 'blocked' : ''}" style="--truck:${t.color}">
+      <div class="truck-card ${t.status === 'blocked' ? 'blocked' : ''}" data-truck="${esc(t.id)}" title="Show trip details" style="--truck:${t.color}">
         <div class="t-head"><span>${esc(t.name)}</span><span class="t-status">${t.status}${t.mode !== 'collect' ? ` · ${t.mode}` : ''}</span></div>
         <div class="t-eta">${esc(l1)}</div>
         <div class="t-sub">${esc(l2)}</div>
@@ -23,6 +23,7 @@ export function renderTruckList(el, sim) {
         <div class="loadbar ${pct >= 100 ? 'over' : ''}"><div style="width:${pct}%"></div></div>
       </div>`;
   }).join('');
+  if (html !== el._html) { el.innerHTML = html; el._html = html; } // unchanged cards stay clickable
 }
 
 const IMPORTANT = new Set(['event', 'handoff', 'pending', 'warning', 'info']);
@@ -113,6 +114,7 @@ export function renderLegend(el, sim) {
     `${ICON_PATHS[kind].map((d) => `<path d="${d}"/>`).join('')}</svg></span>`;
   el.innerHTML = [
     item(svg('truck', '#0f172a', '#fff', '#38bdf8'), 'truck (ring = its colour, chip = ETA)'),
+    item('<span class="swatch" style="border-radius:50%;background:#38bdf8;border:1.5px solid #fff"></span>', 'numbered dot = truck parked at the depot'),
     item(svg('bin', '#0f172a', BIN_STATUS_COLORS.full, '#0f172a'), 'bin'),
     item(svg('depot', '#065f46', '#fff', '#059669'), sim.world.depotName || 'depot'),
     ...(sim.world.disposal !== sim.world.depot
@@ -121,6 +123,7 @@ export function renderLegend(el, sim) {
     item(box(BIN_STATUS_COLORS.medium), `bin ${th.medium}–${th.high}%`),
     item(box(BIN_STATUS_COLORS.full), `bin ≥ ${th.high}% (needs pickup)`),
     item(box(BIN_STATUS_COLORS.collected), 'collected'),
+    item('<span class="swatch" style="border:3px solid #9ca3af"></span>', 'grey outline = Unassigned (not in a route area)'),
     item('<span class="swatch line" style="background:#fb923c"></span>', 'traffic delay'),
     item('<span class="swatch dash"></span>', 'road closed'),
     ...sim.trucks.map((t) => item(`<span class="swatch line" style="background:${t.color}"></span>`, `${t.name} (ring = assigned bins)`)),

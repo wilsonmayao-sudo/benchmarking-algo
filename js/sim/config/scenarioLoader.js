@@ -150,6 +150,7 @@ export async function loadScenario(config, io = {}) {
     description: config.description || '',
     seed,
     graph,
+    allowed: map.allowed, // 1 = node in the main connected road network (null = all)
     nodeLabel: map.nodeLabel,
     edgeLabel: map.edgeLabel,
     mapType: map.type,

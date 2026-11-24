@@ -34,6 +34,19 @@ export function createBinState(cfg) {
   };
 }
 
+/**
+ * The `limit` most urgent bins (highest fill level first; ties keep list order).
+ * A bin emptied during the run keeps its place, so the map does not swap bins while trucks work.
+ * Bins in `pinned` (a Set of ids) are shown on top of the limit.
+ */
+export function visibleBins(bins, limit, pinned = null) {
+  if (!(limit < bins.length)) return bins;
+  const sorted = bins.slice().sort((a, b) => (b.fillAtPickup ?? b.fill) - (a.fillAtPickup ?? a.fill)); // stable sort
+  const shown = sorted.slice(0, limit);
+  if (pinned && pinned.size) for (const b of sorted.slice(limit)) if (pinned.has(b.id)) shown.push(b);
+  return shown;
+}
+
 /** Visual status used for colour-coding (see header). */
 export function binStatus(bin, thresholds) {
   if (bin.state === 'collected') return 'collected';

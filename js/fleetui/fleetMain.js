@@ -9,6 +9,7 @@ import { toJSON, toCSV } from '../sim/metrics.js';
 import { fmtClock } from '../sim/fleet/eta.js';
 import { mulberry32 } from '../core/rng.js';
 import { FleetMapView } from './mapView.js';
+import { FleetEditor } from './editor.js';
 import {
   renderTruckList, renderLog, renderMetrics, renderTruckTable,
   renderEventTable, renderRunsTable, renderLegend,
@@ -30,6 +31,14 @@ const state = {
 };
 
 const map = new FleetMapView($('fleetCanvas'));
+
+// Bins, routes and trip details.
+const editor = new FleetEditor(map, {
+  rebuild: () => rebuild(),
+  onChange: () => refreshPanels(),
+  onModeStart: () => { if (map.pickMode) setPicking(false); }, // one map tool at a time
+  isPlaying: () => state.playing,
+});
 
 // ------------------------------------------------------------------ loading
 
@@ -96,6 +105,7 @@ async function rebuild() {
   if (state.eventSeed !== undefined) overrides.eventSeed = state.eventSeed;
 
   const world = await loadScenario(cfg, { readText, overrides });
+  editor.limitBins(world); // only the bins shown on the map take part
   state.sim = new Simulation(world);
   state.recorded = false;
   state.carry = 0;
@@ -105,7 +115,9 @@ async function rebuild() {
     ? `Random-event seed: ${state.eventSeed ?? cfg.events?.random?.seed ?? 'scenario default'}` +
       `${state.eventSeed !== undefined ? ' (re-rolled)' : ''} — the same seed always gives the same events.`
     : 'Random events are off.';
-  map.setSimulation(state.sim);
+  const sameMap = map.setSimulation(state.sim);
+  editor.attach(state.sim); // puts saved bins and routes back
+  if (!sameMap) map.resetView(); // frame the bins and routes that were just put back, too
   renderLegend($('fleetLegend'), state.sim);
   const imp = world.binImport;
   const importLine = imp
@@ -171,6 +183,7 @@ function refreshPanels(full = false) {
   renderLog($('logList'), sim.logEntries, $('logFilter').value);
   renderMetrics($('metricsTable'), sim.summary());
   renderTruckTable($('truckTable'), sim);
+  editor.refresh();
   renderEventTable($('eventTable'), sim);
   if (full) renderRunsTable($('runsCompareTable'), state.runs);
 }
@@ -288,6 +301,7 @@ function placeLiveEvent(edge) {
 }
 
 function setPicking(on) {
+  if (on && map.editMode !== 'none') editor.setMode('none');
   map.setPickMode(on);
   $('btnPick').setAttribute('aria-pressed', String(on));
   $('btnPick').innerHTML = on ? '&#10003; Picking — click roads (Esc to stop)' : '&#128433; Click a road';

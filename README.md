@@ -777,3 +777,19 @@ traffic and closure models live.
   a 300 000-road extract will feel sluggish when you resize the window.
 * **One origin/destination pair per scenario.** Re-running with a different seed gives a
   different pair if you want a broader sample.
+
+## Fleet page: bins, area-locked routes and trip details
+
+* **Bins shown** keeps only the fullest 1–10 bins in the run, plus the ones you add (remembered; changing it restarts the run).
+* **Add Bin**: click the map, fill in the form. Drag a bin to move it, click it to edit or delete it.
+* **Create Route**: draw an area, choose its bins, a name, color and trucks. Each truck makes a full trip:
+  depot → area → bins → landfill → depot. It drives every metre of it (never jumps). While collecting it only
+  uses roads completely inside the area and only collects that route's bins; on the way to the area, the
+  landfill and the depot it may use any road but collects nothing. A truck that is full early goes to the
+  landfill and comes back for the rest. Stops take 2 min (15 s for each further bin on the same point).
+  Other trucks keep using the normal dispatcher.
+* Click a truck, a truck card or a route for **trip details**.
+* Your bins and routes are saved in the browser, per scenario. Runs that use them are marked in the
+  comparison table; with no edits the results are identical to before.
+
+Code: `js/sim/fleet/routes.js`, `routeAreas.js`, `trip.js`, `js/fleetui/editor.js`. Tests: `npm run routecheck`.
