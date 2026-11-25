@@ -30,3 +30,6 @@ npm-debug.log*
 .cache/
 tmp/
 temp/
+
+# Local datasets
+data/
