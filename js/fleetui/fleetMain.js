@@ -150,6 +150,7 @@ async function rebuild() {
 
   const world = await loadScenario(cfg, { readText, overrides });
   await areas.prepare(cfg, world);
+  const extraBins = areas.ensureAreaBins(world);
   editor.limitBins(world); // only the bins shown on the map take part
   state.sim = new Simulation(world);
   state.recorded = false;
@@ -175,7 +176,8 @@ async function rebuild() {
     : '';
   $('scenarioInfo').textContent =
     `${world.name}: ${world.graph.nodeCount} nodes, ${world.graph.edgeCount} roads, ${world.trucks.length} trucks, ` +
-    `${world.bins.length} bins, ${world.events.length} events.${importLine} ${world.description}`;
+    `${world.bins.length} bins${extraBins.addedCount ? ` (+${extraBins.addedCount} extra area bins)` : ''}, ` +
+    `${world.events.length} events.${importLine} ${world.description}`;
   $('btnExportJson').disabled = false;
   setStatus('Ready');
 

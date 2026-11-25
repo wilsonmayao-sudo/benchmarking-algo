@@ -13,6 +13,7 @@ import { parseCsv } from '../data/cityMapLoader.js';
 import { parseDays } from '../sim/config/scenarioLoader.js';
 import { pointInPolygon, polygonArea } from '../sim/fleet/routeAreas.js';
 import { truckXY } from '../sim/fleet/truck.js';
+import { mulberry32, randRange, shuffle } from '../core/rng.js';
 
 /** Metres added around a schedule area's outermost stops. */
 const STOP_MARGIN = 150;
@@ -254,4 +255,150 @@ export function fleetIn(sim, zone) {
     if (inZone(zone, p.x, p.y)) { here.add(t.id); trucks.add(t.id); }
   }
   return { trucks, here, bins };
+}
+
+/** Nodes strongly reachable from and back to the depot along directed road arcs. */
+function drivableMask(graph, depot) {
+  const n = graph.nodeCount;
+  const sweep = (forward) => {
+    const seen = new Uint8Array(n);
+    const stack = [depot];
+    seen[depot] = 1;
+    while (stack.length > 0) {
+      const u = stack.pop();
+      const first = forward ? graph.adjStart[u] : graph.revStart[u];
+      const last = forward ? graph.adjStart[u + 1] : graph.revStart[u + 1];
+      for (let k = first; k < last; k++) {
+        const v = forward ? graph.adjNeighbor[k] : graph.adjTail[graph.revArc[k]];
+        if (!seen[v]) { seen[v] = 1; stack.push(v); }
+      }
+    }
+    return seen;
+  };
+  const fwd = sweep(true);
+  const bwd = sweep(false);
+  const mask = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (fwd[i] && bwd[i]) mask[i] = 1;
+  return mask;
+}
+
+/**
+ * Add extra simulated collection bins across every schedule area and barangay
+ * so every area/barangay always has extra bins available for collection simulation.
+ *
+ * @param {object} world loaded scenario world
+ * @param {Array<object>} zones schedule + boundary zones
+ * @param {{extraPerScheduleArea?:number, minPerBarangay?:number, fill?:[number,number]}} [options]
+ * @returns {{addedCount:number, scheduleAdded:number, barangayAdded:number}}
+ */
+export function addExtraAreaBins(world, zones, options = {}) {
+  const { graph } = world;
+  if (!graph || graph.nodeCount < 2 || !Array.isArray(zones) || zones.length === 0) {
+    return { addedCount: 0, scheduleAdded: 0, barangayAdded: 0 };
+  }
+
+  const extraPerScheduleArea = options.extraPerScheduleArea ?? 3;
+  const minPerBarangay = options.minPerBarangay ?? 3;
+  const [fMin, fMax] = Array.isArray(options.fill) && options.fill.length === 2 ? options.fill : [45, 95];
+
+  const cap = world.settings.bin_capacity_kg || 168;
+  const serviceTime = world.settings.service_time_s ?? 60;
+  const drivable = drivableMask(graph, world.depot);
+
+  const occupied = new Set(world.bins.map((b) => b.node));
+  occupied.add(world.depot);
+  occupied.add(world.disposal);
+  const usedIds = new Set(world.bins.map((b) => b.id));
+
+  const areaTruck = new Map();
+  for (const t of world.trucks || []) {
+    for (const a of t.areas || []) {
+      const k = String(a).trim().toUpperCase();
+      if (k && !areaTruck.has(k)) areaTruck.set(k, t.id);
+    }
+  }
+
+  const rng = mulberry32((((world.seed || 20260913) ^ 0x51a7b3c1) >>> 0) || 1);
+  const uniqueId = (base) => {
+    let id = base;
+    for (let k = 2; usedIds.has(id); k++) id = `${base}~${k}`;
+    usedIds.add(id);
+    return id;
+  };
+
+  const makeExtraBin = (id, name, node, areaCode, owner) => {
+    const fill = Math.round(randRange(rng, fMin, fMax));
+    return {
+      id,
+      name,
+      node,
+      fill,
+      capacityKg: cap,
+      load: (cap * fill) / 100,
+      configTruck: owner ?? null,
+      serviceTime,
+      area: areaCode ?? null,
+      extra: true,
+    };
+  };
+
+  const pickNodesInZone = (zone) => {
+    const nodes = [];
+    for (let i = 0; i < graph.nodeCount; i++) {
+      if (!drivable[i] || (world.allowed && !world.allowed[i]) || occupied.has(i)) continue;
+      if (inZone(zone, graph.x[i], graph.y[i])) nodes.push(i);
+    }
+    shuffle(rng, nodes);
+    return nodes;
+  };
+
+  const schedZones = zones.filter((z) => z.kind === 'schedule');
+  const brgyZones = zones.filter((z) => z.kind === 'barangay');
+  let scheduleAdded = 0;
+  let barangayAdded = 0;
+
+  if (extraPerScheduleArea > 0) {
+    for (const z of schedZones) {
+      const code = z.code || z.name;
+      const owner = areaTruck.get(String(code).toUpperCase()) ?? null;
+      const candidates = pickNodesInZone(z);
+      const take = Math.min(extraPerScheduleArea, candidates.length);
+      const label = z.displayName || z.name;
+      for (let k = 1; k <= take; k++) {
+        const node = candidates[k - 1];
+        occupied.add(node);
+        const id = uniqueId(`XB_${code}_${k}`);
+        world.bins.push(makeExtraBin(id, `${label} Extra Bin ${k}`, node, code, owner));
+        scheduleAdded++;
+      }
+    }
+  }
+
+  if (minPerBarangay > 0) {
+    for (const z of brgyZones) {
+      let existing = 0;
+      for (const b of world.bins) {
+        const bx = b.x ?? graph.x[b.node];
+        const by = b.y ?? graph.y[b.node];
+        if (inZone(z, bx, by)) existing++;
+      }
+      const need = minPerBarangay - existing;
+      if (need <= 0) continue;
+      const candidates = pickNodesInZone(z);
+      const take = Math.min(need, candidates.length);
+      const slug = String(z.name).toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-|-$/g, '');
+      for (let k = 1; k <= take; k++) {
+        const node = candidates[k - 1];
+        occupied.add(node);
+        const schedMatch = schedZones.find((sz) => inZone(sz, graph.x[node], graph.y[node]));
+        const areaCode = schedMatch ? (schedMatch.code || schedMatch.name) : null;
+        const owner = areaCode ? (areaTruck.get(String(areaCode).toUpperCase()) ?? null) : null;
+        const id = uniqueId(`XB_BRGY_${slug}_${k}`);
+        world.bins.push(makeExtraBin(id, `${z.name} Extra Bin ${k}`, node, areaCode, owner));
+        barangayAdded++;
+      }
+    }
+  }
+
+  return { addedCount: scheduleAdded + barangayAdded, scheduleAdded, barangayAdded };
 }

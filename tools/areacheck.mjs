@@ -84,5 +84,17 @@ check('all 17 schedule areas contain reachable road nodes for isolated benchmark
     return false;
   }));
 
+const naga14World = await loadScenario(naga14Cfg, { readText, overrides: { noEvents: true } });
+const extraStats = A.addExtraAreaBins(naga14World, [...schedule, ...barangays], { extraPerScheduleArea: 3, minPerBarangay: 3 });
+check('extra area bins placed across all 17 schedule areas (51 extra) and every barangay (>= 3 bins)',
+  extraStats.scheduleAdded === 51 &&
+  schedule.every((z) => naga14World.bins.filter((b) => b.extra && b.area === z.code).length >= 3 &&
+    naga14World.bins.filter((b) => b.id.startsWith(`XB_${z.code}_`)).length === 3) &&
+  barangays.every((z) => naga14World.bins.filter((b) => A.inZone(z, naga14World.graph.x[b.node], naga14World.graph.y[b.node])).length >= 3));
+
+const naga14Sim = new Simulation(naga14World).run();
+check('all bins including extra area bins are collected in simulation',
+  naga14Sim.finished && naga14Sim.binsCollected === naga14World.bins.length && naga14Sim.binsMissed === 0);
+
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

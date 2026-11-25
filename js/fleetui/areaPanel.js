@@ -5,7 +5,7 @@
  */
 
 import {
-  makeZone, zoneAt, inZone, toXY, toLngLat, readStops, scheduleZones, boundaryZones, binInZone, stopsInZone, fleetIn, formatAreaLabel,
+  makeZone, zoneAt, inZone, toXY, toLngLat, readStops, scheduleZones, boundaryZones, binInZone, stopsInZone, fleetIn, formatAreaLabel, addExtraAreaBins,
 } from './areas.js';
 import { selfCrosses, polygonArea } from '../sim/fleet/routeAreas.js';
 import { mulberry32 } from '../core/rng.js';
@@ -90,6 +90,16 @@ export class AreaPanel {
     this.pendingView = !sameScenario && this.zone ? this.zone.bbox : null;
     this._fill();
     this.say(problems.length ? `⚠ Could not load ${problems.join('; ')}` : '', 'err');
+  }
+
+  /** Ensure every schedule area and barangay has extra simulated bins for collection. */
+  ensureAreaBins(world) {
+    if (!world || this.zones.length === 0) return { addedCount: 0, scheduleAdded: 0, barangayAdded: 0 };
+    return addExtraAreaBins(world, this.zones, {
+      extraPerScheduleArea: 3,
+      minPerBarangay: 3,
+      fill: this.cfg?.bins?.random?.fill || this.cfg?.bins?.fill || [45, 95],
+    });
   }
 
   /** The editor asks which bins take part (null = all). */
