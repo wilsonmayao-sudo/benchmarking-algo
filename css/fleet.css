@@ -251,3 +251,15 @@ button.danger { color: #fca5a5; border-color: #b91c1c; }
 .fleet-grid > div { min-width: 0; }
 @media (max-width: 1000px) { .fleet-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 700px) { .fleet-results .inline-select { display: block; width: 100%; margin: 6px 0 0; } }
+
+/* ------------------------------------------------------- testing areas */
+.area-bar { margin-bottom: 8px; }
+.area-bar #areaSelect { max-width: 220px; }
+.area-bar #areaName { width: 150px; }
+.area-bar #areaInfo { margin: 0; }
+.area-bar #areaInfo.err { color: #f87171; font-weight: 600; }
+.truck-card.outside { opacity: 0.4; }
+#areaLogWrap[hidden] { display: none; }
+.map-zoom { position: absolute; top: 10px; left: 10px; z-index: 4; display: flex; flex-direction: column; gap: 4px; }
+.map-zoom button { width: 36px; height: 36px; padding: 0; font-size: 20px; line-height: 1; }
+@media (max-width: 700px) { .area-bar button, .area-bar select { min-height: 40px; } }

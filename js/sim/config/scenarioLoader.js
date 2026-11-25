@@ -432,7 +432,7 @@ function buildBins(binsCfg, ctx) {
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
 /** "{Monday,Wednesday}" / '["Mon","Wed"]' / "Mon, Wed" → ['mon', 'wed'] (first 3 letters). */
-function parseDays(value) {
+export function parseDays(value) {
   if (!value) return [];
   return String(value)
     .replace(/[{}[\]"]/g, '')

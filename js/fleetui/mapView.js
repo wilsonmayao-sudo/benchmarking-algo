@@ -5,6 +5,8 @@
  *   street map   OpenStreetMap tiles (imported lat/lng maps only, same tiles as the
  *                WebApp's Live Monitoring fallback map) — needs internet, else skipped
  *   roads        simulation road network; DELAYED orange "×2.5", CLOSED red dashed + ✕
+ *   testing area the selected area (see areaPanel.js): everything around it is darkened; trucks,
+ *                paths and bins that do not belong to it are dimmed or hidden
  *   paths        each truck's remaining planned route in its colour
  *   depot / disposal   white round markers with warehouse / landfill icons + name
  *   bins         trash-bin icon on a tile coloured by status (green / yellow / red / gray),
@@ -59,6 +61,10 @@ function icon(kind) {
 const TILE_URL = (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
 const TILE_CACHE_MAX = 400;
 
+const DIMMED = 0.22; // opacity of what is outside the selected testing area
+const FLY_MS = 650;
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 const COLORS = {
   road: '#3b4a61',
   roadClosed: '#ef4444',
@@ -75,7 +81,7 @@ export class FleetMapView {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.sim = null;
-    this.options = { paths: true, etaLabels: true, binLabels: true, nodeIds: false, basemap: true };
+    this.options = { paths: true, etaLabels: true, binLabels: true, nodeIds: false, basemap: true, borders: true };
     this.tiles = new Map(); // "z/x/y" → { img, ok }
     this.zoom = 1;
     this.pan = { x: 0, y: 0 };
@@ -93,6 +99,13 @@ export class FleetMapView {
     this.highlight = new Set(); // truck ids whose details are open
     this.getVisibleBins = () => this.sim.bins;
     this.onAddBin = this.onCloseDraft = this.onPickTruck = this.onPickBin = this.onPickRoute = this.onMoveBin = null;
+    /** Testing areas (see areaPanel.js): outlines to show, and the selected one with its fleet. */
+    this.zones = [];
+    this.focus = null;          // { zone, outside: 'dim'|'hide', trucks, here, bins, stops }
+    this.hoverZone = null;
+    this.onPickZone = this.zoneAt = null;
+    this.fly = null;            // running camera move
+    this.glide = null;          // wheel zoom still to be applied
     this._bindInteraction();
     new ResizeObserver(() => this.render()).observe(canvas);
   }
@@ -121,6 +134,7 @@ export class FleetMapView {
   setEditMode(mode) {
     this.editMode = mode;
     this.draft = [];
+    this.hoverZone = null;
     this.canvas.classList.toggle('editing', mode !== 'none');
     this.render();
   }
@@ -145,6 +159,7 @@ export class FleetMapView {
     let best = null;
     let bestD = r;
     for (const b of this.getVisibleBins()) {
+      if (this._binAlpha(b) === 0) continue;
       const d = Math.hypot(this.tx(b.x) - px, this.ty(b.y) - py);
       if (d < bestD) { bestD = d; best = b; }
     }
@@ -160,7 +175,8 @@ export class FleetMapView {
     const { px, py } = this._local(e);
     const x = this.wx(px), y = this.wy(py);
     if (this.editMode === 'addBin') { this.onAddBin?.(x, y); return; }
-    if (this.editMode === 'draw') {
+    if (this.editMode === 'pickZone') { this.onPickZone?.(x, y); return; }
+    if (this.editMode === 'draw' || this.editMode === 'drawZone') {
       const first = this.draft[0];
       const last = this.draft[this.draft.length - 1];
       const near = (p, d) => p && Math.hypot(this.tx(p[0]) - px, this.ty(p[1]) - py) < d;
@@ -200,7 +216,184 @@ export class FleetMapView {
     return best;
   }
 
+  // --------------------------------------------------------------- camera
+
+  /** Move smoothly to `bounds` (map metres), or to the whole fleet (null). */
+  flyTo(bounds, animate = true) {
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    if (!this.sim || w < 50 || h < 50) return;
+    this.glide = null;
+    this._fit();
+    const from = { x: this.wx(w / 2), y: this.wy(h / 2), s: this.scale };
+    if (!bounds) this.homeBounds = null; // bins or routes may have moved
+    this._fit();
+    const b = bounds || this.homeBounds;
+    const pad = Math.min(60, w * 0.08, h * 0.12);
+    const s = bounds
+      ? Math.min(3, (w - 2 * pad) / Math.max(1, b.maxX - b.minX), (h - 2 * pad) / Math.max(1, b.maxY - b.minY))
+      : this._base;
+    this._camera(from.x, from.y, from.s);
+    this.fly = {
+      from, to: { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2, s }, home: !bounds,
+      start: performance.now(), ms: animate && !reducedMotion() ? FLY_MS : 0,
+    };
+    this.render();
+  }
+
+  /** Back to the selected testing area, or to the whole fleet. */
+  home() { this.flyTo(this.focus ? this.focus.zone.bbox : null); }
+
+  /** Zoom about the middle of the map (the + and − buttons). */
+  zoomBy(f) { if (this.sim) this._glideZoom(0, 0, f); }
+
+  _glideZoom(mx, my, f) {
+    this.fly = null;
+    this.glide = { mx, my, left: (this.glide?.left || 0) + Math.log(f), at: this.glide?.at ?? performance.now() };
+    this.render();
+  }
+
+  _camera(x, y, s) {
+    const b = this.homeBounds;
+    this.zoom = s / this._base;
+    this.pan = { x: -(x - (b.minX + b.maxX) / 2) * s, y: (y - (b.minY + b.maxY) / 2) * s };
+  }
+
+  /** Zoom about a point given relative to the canvas centre, within sensible limits. */
+  _zoomAbout(mx, my, f) {
+    const base = this._base || 1;
+    const most = Math.max(8, base * 30), least = base * 0.15;
+    f = Math.min(Math.max(f, Math.min(1, least / this.scale)), Math.max(1, most / this.scale));
+    this.pan.x = mx - (mx - this.pan.x) * f;
+    this.pan.y = my - (my - this.pan.y) * f;
+    this.zoom *= f;
+  }
+
+  /** One step of a running camera move. @returns {boolean} the view changed */
+  _advance() {
+    const now = performance.now();
+    if (this.fly) {
+      const { from, to, start, ms, home } = this.fly;
+      const k = ms ? Math.min(1, (now - start) / ms) : 1;
+      if (k === 1) {
+        this.fly = null;
+        if (home) { this.zoom = 1; this.pan = { x: 0, y: 0 }; } else this._camera(to.x, to.y, to.s);
+        return true;
+      }
+      const t = k * k * (3 - 2 * k);
+      const s = from.s * (to.s / from.s) ** t;
+      // same fixed point while zooming, so the target does not swing across the screen
+      const u = Math.abs(Math.log(to.s / from.s)) < 0.02 ? t : (1 / from.s - 1 / s) / (1 / from.s - 1 / to.s);
+      this._camera(from.x + (to.x - from.x) * u, from.y + (to.y - from.y) * u, s);
+      return true;
+    }
+    if (this.glide) {
+      const g = this.glide;
+      const k = reducedMotion() ? 1 : 1 - Math.exp(-(now - g.at) / 70);
+      g.at = now;
+      const part = Math.abs(g.left) < 0.004 ? g.left : g.left * k;
+      g.left -= part;
+      this._zoomAbout(g.mx, g.my, Math.exp(part));
+      if (g.left === 0) this.glide = null;
+      return true;
+    }
+    return false;
+  }
+
+  // ---------------------------------------------------------- testing area
+
+  /** Opacity of a truck / bin: 1 = belongs to the selected area (or none is selected), 0 = hidden. */
+  _truckAlpha(t) {
+    if (!this.focus || this.focus.trucks.has(t.id) || this.highlight.has(t.id)) return 1;
+    return this.focus.outside === 'hide' ? 0 : DIMMED;
+  }
+
+  _binAlpha(b) {
+    if (!this.focus || this.focus.bins.has(b.id) || this.pickNumbers?.has(b.id)) return 1;
+    return this.focus.outside === 'hide' ? 0 : DIMMED;
+  }
+
+  _zonePath(ctx, zone) {
+    for (const r of zone.rings) {
+      r.forEach(([x, y], i) => (i ? ctx.lineTo(this.tx(x), this.ty(y)) : ctx.moveTo(this.tx(x), this.ty(y))));
+      ctx.closePath();
+    }
+  }
+
+  /** Area outlines; the selected one stays clear while everything around it is darkened. */
+  _drawZones(ctx, w, h) {
+    const { focus } = this;
+    const sel = focus?.zone;
+    if (sel) {
+      ctx.beginPath();
+      ctx.rect(0, 0, w, h);
+      this._zonePath(ctx, sel);
+      ctx.fillStyle = focus.outside === 'hide' ? 'rgba(15, 23, 42, 0.62)' : 'rgba(15, 23, 42, 0.42)';
+      ctx.fill('evenodd');
+    }
+    if (this.options.borders) {
+      for (const z of this.zones) {
+        if (z === sel) continue;
+        const hover = z === this.hoverZone;
+        ctx.beginPath();
+        this._zonePath(ctx, z);
+        if (hover) { ctx.fillStyle = 'rgba(6, 182, 212, 0.25)'; ctx.fill('evenodd'); }
+        ctx.strokeStyle = sel ? 'rgba(226, 232, 240, 0.65)' : 'rgba(14, 116, 144, 0.9)';
+        ctx.lineWidth = hover ? 3 : 1.5;
+        ctx.setLineDash([7, 5]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        const b = z.bbox;
+        // schedule areas overlap, so their names would cover each other
+        if (hover || (z.kind !== 'schedule' && (b.maxX - b.minX) * this.scale > 70)) {
+          const x = this.tx((b.minX + b.maxX) / 2), y = this.ty((b.minY + b.maxY) / 2);
+          if (x > 0 && x < w && y > 0 && y < h) this._tag(ctx, z.name, x, y, '#a5f3fc'); // labels stick to the edge otherwise
+        }
+      }
+    }
+    if (!sel) return;
+    ctx.beginPath();
+    this._zonePath(ctx, sel);
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 7;
+    ctx.stroke();
+    ctx.strokeStyle = '#0891b2';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    this._drawStops(ctx, focus.stops);
+    const top = sel.rings.flat().reduce((a, b) => (b[1] > a[1] ? b : a));
+    this._tag(ctx, sel.name, this.tx(top[0]), Math.min(h - 12, Math.max(12, this.ty(top[1]) - 14)), '#67e8f9');
+  }
+
+  /** Checkpoints of the selected area: every schedule stop, numbered; "×4" = several on one point. */
+  _drawStops(ctx, stops) {
+    const spots = new Map();
+    for (const s of stops) {
+      const key = `${Math.round(s.x)},${Math.round(s.y)}`;
+      if (!spots.has(key)) spots.set(key, []);
+      spots.get(key).push(s);
+    }
+    ctx.font = 'bold 10px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const list of spots.values()) {
+      const x = this.tx(list[0].x), y = this.ty(list[0].y);
+      const text = list.length > 1 ? `×${list.length}` : list[0].order || '•';
+      const r = Math.max(9, ctx.measureText(text).width / 2 + 5);
+      ctx.beginPath();
+      ctx.roundRect(x - r, y - 9, 2 * r, 18, 9);
+      ctx.fillStyle = list.some((s) => s.type === 'collection') ? '#0e7490' : '#64748b';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(text, x, y + 0.5);
+    }
+  }
+
   resetView() {
+    this.fly = this.glide = null;
     this.zoom = 1;
     this.pan = { x: 0, y: 0 };
     this.homeBounds = null; // worked out again on the next render
@@ -259,16 +452,8 @@ export class FleetMapView {
       const r = c.getBoundingClientRect();
       const mx = e.clientX - r.left - c.clientWidth / 2;
       const my = e.clientY - r.top - c.clientHeight / 2;
-      zoomAbout(mx, my, f);
+      this._glideZoom(mx, my, f);
     }, { passive: false });
-
-    // zoom about a point given relative to the canvas centre
-    const zoomAbout = (mx, my, f) => {
-      this.pan.x = mx - (mx - this.pan.x) * f;
-      this.pan.y = my - (my - this.pan.y) * f;
-      this.zoom *= f;
-      this.render();
-    };
 
     const touches = new Map(); // two fingers = pinch zoom (phones)
     let pinch = 0;
@@ -299,7 +484,9 @@ export class FleetMapView {
         const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
         const r = c.getBoundingClientRect();
         if (pinch > 0 && d > 0) {
-          zoomAbout((a.clientX + b.clientX) / 2 - r.left - c.clientWidth / 2, (a.clientY + b.clientY) / 2 - r.top - c.clientHeight / 2, d / pinch);
+          this.fly = this.glide = null;
+          this._zoomAbout((a.clientX + b.clientX) / 2 - r.left - c.clientWidth / 2, (a.clientY + b.clientY) / 2 - r.top - c.clientHeight / 2, d / pinch);
+          this.render();
         }
         pinch = d;
         return;
@@ -308,6 +495,10 @@ export class FleetMapView {
         if (this.pickMode) {
           const hit = this.edgeAt(e.clientX, e.clientY);
           if (hit !== this.hoverEdge) { this.hoverEdge = hit; this.render(); }
+        } else if (this.editMode === 'pickZone' && this.sim) {
+          const { px, py } = this._local(e);
+          const hit = this.zoneAt?.(this.wx(px), this.wy(py)) || null;
+          if (hit !== this.hoverZone) { this.hoverZone = hit; this.render(); }
         }
         return;
       }
@@ -318,6 +509,7 @@ export class FleetMapView {
         this.render();
         return;
       }
+      this.fly = this.glide = null;
       this.pan.x += e.clientX - drag.x;
       this.pan.y += e.clientY - drag.y;
       drag = { ...drag, x: e.clientX, y: e.clientY };
@@ -346,9 +538,9 @@ export class FleetMapView {
       if (this.hoverEdge !== -1) { this.hoverEdge = -1; this.render(); }
     });
     c.addEventListener('dblclick', (e) => {
-      if (this.editMode === 'draw') { if (this.draft.length >= 3) this.onCloseDraft?.(); return; }
+      if (this.editMode === 'draw' || this.editMode === 'drawZone') { if (this.draft.length >= 3) this.onCloseDraft?.(); return; }
       const { px, py } = this._local(e);
-      if (!this.pickMode && this.editMode === 'none' && this.truckAt(px, py) === null && !this.binAt(px, py)) this.resetView();
+      if (!this.pickMode && this.editMode === 'none' && this.truckAt(px, py) === null && !this.binAt(px, py)) this.home();
     });
   }
 
@@ -369,9 +561,11 @@ export class FleetMapView {
     if (!this.sim || w < 50 || h < 50) return;
 
     this._fit();
+    if (this._advance()) this._fit();
     const street = this.options.basemap && this.sim.world.geo;
     if (street) this._drawBasemap(ctx, w, h, dpr);
     this._drawRoads(ctx, street);
+    this._drawZones(ctx, w, h);
     this._drawAreas(ctx);
     if (this.options.paths) this._drawPaths(ctx);
     this._drawSites(ctx);
@@ -562,10 +756,16 @@ export class FleetMapView {
     const dense = graph.edgeCount > 3000;
 
     // 1. normal roads in one stroke
+    // (zoomed in: skip roads that are completely off the screen)
+    const west = this.wx(-5), east = this.wx(this.canvas.clientWidth + 5);
+    const south = this.wy(this.canvas.clientHeight + 5), north = this.wy(-5);
+    const gx = graph.x, gy = graph.y;
     ctx.beginPath();
     for (let e = 0; e < graph.edgeCount; e++) {
       if (road.closed[e] || road.multiplier[e] !== 1) continue;
       const u = graph.edgeFrom[e], v = graph.edgeTo[e];
+      if ((gx[u] < west && gx[v] < west) || (gx[u] > east && gx[v] > east) ||
+        (gy[u] < south && gy[v] < south) || (gy[u] > north && gy[v] > north)) continue;
       ctx.moveTo(tx(graph.x[u]), ty(graph.y[u]));
       ctx.lineTo(tx(graph.x[v]), ty(graph.y[v]));
     }
@@ -609,6 +809,8 @@ export class FleetMapView {
     const { tx, ty } = this;
     this.sim.trucks.forEach((truck, i) => {
       if (truck.arcs.length === 0 && !truck.routeId) return;
+      const alpha = this._truckAlpha(truck);
+      if (alpha === 0) return;
       const off = ((i % 5) - 2) * 2; // small, bounded offset so overlapping routes stay distinguishable
       const p = truckXY(graph, truck);
       // Route trucks: every later stop as a thinner dashed line.
@@ -620,10 +822,12 @@ export class FleetMapView {
           ctx.moveTo(tx(graph.x[s]) + off, ty(graph.y[s]) + off);
           for (const a of later) ctx.lineTo(tx(graph.x[graph.adjNeighbor[a]]) + off, ty(graph.y[graph.adjNeighbor[a]]) + off);
           ctx.strokeStyle = truck.color;
+          ctx.globalAlpha = alpha;
           ctx.lineWidth = 2.5;
           ctx.setLineDash([6, 4]);
           ctx.stroke();
           ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
         }
       }
       if (truck.arcs.length === 0) return;
@@ -634,7 +838,7 @@ export class FleetMapView {
         ctx.lineTo(tx(graph.x[v]) + off, ty(graph.y[v]) + off);
       }
       ctx.strokeStyle = truck.color;
-      ctx.globalAlpha = 0.75;
+      ctx.globalAlpha = 0.75 * alpha;
       ctx.lineWidth = 3;
       ctx.setLineDash(truck.status === 'blocked' ? [4, 4] : []);
       ctx.stroke();
@@ -673,12 +877,16 @@ export class FleetMapView {
     // Bins on the same point are drawn on top of each other: count and number them.
     const spots = new Map();
     for (const bin of this.getVisibleBins()) {
+      if (this._binAlpha(bin) < 1) continue;
       const key = `${Math.round(bin.x)},${Math.round(bin.y)}`;
       if (!spots.has(key)) spots.set(key, []);
       spots.get(key).push(bin);
     }
     this._spots = [...spots.values()];
     for (const bin of this.getVisibleBins()) {
+      const alpha = this._binAlpha(bin);
+      if (alpha === 0) continue;
+      ctx.globalAlpha = alpha;
       const moved = this.dragBin?.id === bin.id ? this.dragBin : bin;
       const x = tx(moved.x), y = ty(moved.y);
       const route = bin.routeId ? this.sim.routes.get(bin.routeId) : null;
@@ -715,7 +923,7 @@ export class FleetMapView {
         ctx.fillText('✓', x + s, y - s + 0.5);
       }
 
-      if (this.options.binLabels) {
+      if (this.options.binLabels && alpha === 1) {
         const fill = bin.state === 'collected' ? `${bin.fillAtPickup}% → 0%` : `${Math.round(bin.fill)}%`;
         this._tag(ctx, `${bin.custom ? bin.name : bin.id} · ${fill}`, x, y - 25, COLORS.text);
         const who = bin.state === 'collected' ? `done by ${truckById.get(bin.collectedBy)?.name.replace('Truck ', 'T') ?? '?'}`
@@ -726,6 +934,7 @@ export class FleetMapView {
         if (who) this._tag(ctx, who, x, y + 25, owner ? owner.color : bin.state === 'pending' ? '#eab308' : COLORS.textDim);
       }
     }
+    ctx.globalAlpha = 1;
   }
 
   /** "3", "1–27" (stop numbers on a route) or "×27" (several bins on one point). */
@@ -767,15 +976,17 @@ export class FleetMapView {
     this._truckSpots = []; // where each truck was drawn, for clicks
 
     const isParked = (t) => t.node === world.depot && t.arcPos === 0 && (t.status === 'idle' || t.status === 'driving');
-    this._drawParked(ctx, trucks.filter(isParked));
+    const shown = trucks.filter((t) => this._truckAlpha(t) > 0);
+    this._drawParked(ctx, shown.filter(isParked));
 
     // Every other truck is drawn where it really is. Trucks on the same spot get a few pixels
     // of shift and their labels go below each other, so none of them seems to jump.
     // The truck whose details are open comes last, on top of the others.
     const seen = [];
     const open = (t) => this.highlight.has(t.id);
-    const moving = trucks.filter((t) => !isParked(t));
-    [...moving.filter((t) => !open(t)), ...moving.filter(open)].forEach((truck) => {
+    const order = (t) => (open(t) ? 2 : this._truckAlpha(t) < 1 ? 0 : 1); // dimmed trucks go underneath
+    const moving = shown.filter((t) => !isParked(t)).sort((a, b) => order(a) - order(b));
+    moving.forEach((truck) => {
       const p = truckXY(graph, truck);
       const px = tx(p.x), py = ty(p.y);
       const k = seen.filter((s) => Math.hypot(s.x - px, s.y - py) < 14).length;
@@ -785,6 +996,8 @@ export class FleetMapView {
       const blocked = truck.status === 'blocked';
       const accent = blocked ? '#ef4444' : truck.color;
       if (open(truck)) this._halo(ctx, x, y, 23);
+      const alpha = this._truckAlpha(truck);
+      ctx.globalAlpha = alpha;
 
       // truck icon in a white disc with a ring in the truck's colour
       this._marker(ctx, 'truck', x, y, 15, accent, '#0f172a', 4);
@@ -802,6 +1015,8 @@ export class FleetMapView {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(blocked ? '!' : truckNumber(truck), x + 12, y - 11.5);
+      ctx.globalAlpha = 1;
+      if (alpha < 1) return; // outside the selected area: no labels
 
       // ETA chip under the truck; while one truck or route is open, the others only show their name
       const brief = this.highlight.size > 0 && !open(truck);
@@ -847,6 +1062,7 @@ export class FleetMapView {
       const cy = top + 4 + Math.floor(i / cols) * step + step / 2;
       this._truckSpots.push({ id: truck.id, x: cx, y: cy, r: 11 });
       if (this.highlight.has(truck.id)) this._halo(ctx, cx, cy, 11);
+      ctx.globalAlpha = this._truckAlpha(truck);
       ctx.beginPath();
       ctx.arc(cx, cy, 9, 0, Math.PI * 2);
       ctx.fillStyle = truck.color;
@@ -859,6 +1075,7 @@ export class FleetMapView {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(truckNumber(truck), cx, cy + 0.5);
+      ctx.globalAlpha = 1;
     });
   }
 

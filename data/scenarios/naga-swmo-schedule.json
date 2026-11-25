@@ -1,15 +1,19 @@
 {
   "name": "Naga City — SWMO collection schedule, 14 active trucks",
-  "description": "Bins are the real collection stops from the EcoLoop collection_schedules table (SWMO Garbage-Collection-Scheme-Clustering-Updated-2026-Final.pdf), placed at their recorded latitude/longitude. Only stop_type = collection is used (start, dump, break, washing and review rows are not bins). Stops more than 300 m from the mapped roads are left out; the import summary says how many. Trucks are the 14 active units of the EcoLoop fleet with their capacity_kg; each covers the schedule area(s) listed in this file (an assumption, edit trucks[].areas to change it) and every truck starts at the depot. Fill levels are not in the schedule, so they are seeded random (30–100 %). Depot and landfill use the WebApp coordinates; disposal trips follow the real roads to the landfill.",
+  "description": "Bins are the real collection stops from the EcoLoop collection_schedules table (SWMO Garbage-Collection-Scheme-Clustering-Updated-2026-Final.pdf), placed at their recorded latitude/longitude. Only stop_type = collection is used (start, dump, break, washing and review rows are not bins). Stops more than 300 m from the mapped roads are left out; the import summary says how many. Trucks are the 14 active units of the EcoLoop fleet with their capacity_kg; each covers the schedule area(s) listed in this file (an assumption, edit trucks[].areas to change it) and every truck starts at the depot. Fill levels are not in the schedule, so they are seeded random (30–100 %). The depot is the Solid Waste Management Office (from Google Maps) and the landfill uses the WebApp coordinates; disposal trips follow the real roads to the landfill.",
   "seed": 20261118,
   "map": {
     "type": "geojson",
     "path": "data/Naga_City_roads.geojson"
   },
+  "test_areas": {
+    "schedule": "data/collection_schedules.csv",
+    "boundaries": "data/naga_areas.geojson"
+  },
   "depot": {
-    "lat": 13.6218,
-    "lng": 123.1948,
-    "name": "SWMO Motorpool & Dispatch Depot"
+    "lat": 13.618842,
+    "lng": 123.1995803,
+    "name": "SWMO Depot (Solid Waste Management Office)"
   },
   "disposal": {
     "lat": 13.6212151,
