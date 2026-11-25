@@ -4,7 +4,7 @@
  * Usage: node tools/serve.mjs [port]   → http://localhost:8000
  */
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,7 +32,24 @@ createServer(async (req, res) => {
       res.writeHead(403).end('Forbidden');
       return;
     }
-    if ((await stat(file)).isDirectory()) file = join(file, 'index.html');
+    if ((await stat(file)).isDirectory()) {
+      const idx = join(file, 'index.html');
+      try {
+        await stat(idx);
+        file = idx;
+      } catch {
+        const entries = await readdir(file, { withFileTypes: true });
+        const links = entries
+          .map((e) => {
+            const name = e.name + (e.isDirectory() ? '/' : '');
+            return `<li><a href="${encodeURIComponent(e.name) + (e.isDirectory() ? '/' : '')}">${name}</a></li>`;
+          })
+          .join('');
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(`<!DOCTYPE html><html><body><ul>${links}</ul></body></html>`);
+        return;
+      }
+    }
     const body = await readFile(file);
     res.writeHead(200, { 'Content-Type': TYPES[extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     res.end(body);

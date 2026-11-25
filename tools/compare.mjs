@@ -108,7 +108,7 @@ function welchT(a, b) {
 
 bar(`1. HEAD-TO-HEAD  (repeats ${REPEATS}, warm-up ${WARMUP} — every metric)`);
 console.log(
-  `${pad('scenario', 32)}${pad('algorithm', 22)}${padL('found', 6)}${padL('valid', 6)}` +
+  `${pad('scenario', 34)}${pad('algorithm', 22)}${padL('found', 6)}${padL('valid', 6)}` +
   `${padL('avg ms', 9)}${padL('±sd', 8)}${padL('min', 8)}${padL('explored', 10)}` +
   `${padL('expanded', 10)}${padL('arcs', 9)}${padL('dist m', 9)}${padL('cost', 10)}`,
 );
@@ -125,7 +125,7 @@ for (const scenario of SCENARIOS) {
 
   for (const r of run.results) {
     console.log(
-      `${pad(scenario.name, 32)}${pad(r.name, 22)}` +
+      `${pad(scenario.name, 34)}${pad(r.name, 22)}` +
       `${padL(r.found ? 'yes' : 'NO', 6)}${padL(r.valid ? 'yes' : 'NO', 6)}` +
       `${padL(num(r.time.avg), 9)}${padL(num(r.time.stddev), 8)}${padL(num(r.time.min), 8)}` +
       `${padL(int(r.nodesExplored.avg), 10)}${padL(int(r.nodesExpanded.avg), 10)}` +
@@ -144,7 +144,7 @@ for (const scenario of SCENARIOS) {
 bar('2. FAIRNESS + WHERE THE DIFFERENCE COMES FROM');
 
 console.log(
-  `${pad('scenario', 32)}${padL('A* ms', 9)}${padL('custom ms', 9)}${padL('custom/A*', 11)}` +
+  `${pad('scenario', 34)}${padL('A* ms', 9)}${padL('custom ms', 9)}${padL('custom/A*', 11)}` +
   `${padL('A* exp', 9)}${padL('cust exp', 10)}${padL('exp ratio', 11)}${padL('cost equal?', 13)}${padL('t', 8)}${padL('verdict', 18)}`,
 );
 
@@ -170,7 +170,7 @@ for (const { row, custom, baseline } of headline) {
   }
 
   console.log(
-    `${pad(row.scenario, 32)}${padL(num(baseline.time.avg), 9)}${padL(num(custom.time.avg), 9)}` +
+    `${pad(row.scenario, 34)}${padL(num(baseline.time.avg), 9)}${padL(num(custom.time.avg), 9)}` +
     `${padL(`${timeRatio.toFixed(3)}x`, 11)}` +
     `${padL(int(baseline.nodesExpanded.avg), 9)}${padL(int(custom.nodesExpanded.avg), 10)}` +
     `${padL(`${expRatio.toFixed(3)}x`, 11)}${padL(costEqual ? 'yes' : 'NO', 13)}` +
@@ -182,8 +182,8 @@ console.log('\nSame-input checks (these are structural, not statistical):');
 const anyMutated = headline.some((h) => h.row.mutated);
 console.log(`  ${anyMutated ? 'x ' : 'ok'}  no algorithm mutated the shared graph during any run`);
 console.log('  ok  both algorithms received the same test-case object by reference');
-console.log('  ok  both read the same CostModel instance (identical traffic / elevation / closure costs)');
-console.log('  ok  both used the same MinHeap class and the same admissible heuristic');
+console.log('  ok  Dynamic A* reads the shared CostModel (traffic / elevation / closures); static A* uses road length');
+console.log('  ok  both used the same MinHeap class');
 console.log('  ok  timing wraps solve() only, for both; prepare() is timed separately');
 
 console.log('\nVerdict on the speed question:');

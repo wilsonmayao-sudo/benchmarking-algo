@@ -13,7 +13,10 @@ export function initControls(handlers) {
     status: $('status'),
     scenarioSelect: $('scenarioSelect'),
     scenarioDesc: $('scenarioDesc'),
-    applyScenario: $('applyScenario'),
+    scenarioType: $('scenarioType'),
+    scenarioSeed: $('scenarioSeed'),
+    rerollScenarioSeed: $('rerollScenarioSeed'),
+    generateScenario: $('generateScenario'),
     progressBar: $('progressBar'),
     progressLabel: $('progressLabel'),
     runBtn: $('runBtn'),
@@ -60,17 +63,37 @@ export function initControls(handlers) {
       climb: $('wClimb'),
       descent: $('wDescent'),
     },
-    applyWeights: $('applyWeights'),
   };
+
+  let networkInputsEnabled = true;
 
   // ------------------------------------------------------------ scenarios
   els.scenarioSelect.addEventListener('change', () => {
     handlers.onScenarioChange(els.scenarioSelect.value);
   });
 
-  if (els.applyScenario) {
-    els.applyScenario.addEventListener('click', () => {
-      handlers.onScenarioChange(els.scenarioSelect.value);
+  if (els.generateScenario) {
+    els.generateScenario.addEventListener('click', () => {
+      if (handlers.onGenerateScenario) handlers.onGenerateScenario(readGeneratorConfig());
+    });
+  }
+  if (els.scenarioType) {
+    els.scenarioType.addEventListener('change', () => {
+      if (handlers.onGenerateScenario) handlers.onGenerateScenario(readGeneratorConfig());
+    });
+  }
+  if (els.scenarioSeed) {
+    els.scenarioSeed.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && handlers.onGenerateScenario) {
+        handlers.onGenerateScenario(readGeneratorConfig());
+      }
+    });
+  }
+  if (els.rerollScenarioSeed) {
+    els.rerollScenarioSeed.addEventListener('click', () => {
+      const next = Math.floor(Math.random() * 89999999) + 10000000;
+      els.scenarioSeed.value = String(next);
+      if (handlers.onGenerateScenario) handlers.onGenerateScenario(readGeneratorConfig());
     });
   }
 
@@ -226,18 +249,12 @@ export function initControls(handlers) {
     });
   }
 
-  if (els.applyWeights) {
-    els.applyWeights.addEventListener('click', () => {
-      handlers.onWeights(readWeights());
-    });
-  }
-
   // ------------------------------------------------------------------ API
   return {
     /** Populate the scenario dropdown. */
     setScenarioList(scenarios, activeId) {
       els.scenarioSelect.innerHTML = scenarios
-        .map((s) => `<option value="${s.id}">${s.name}</option>`)
+        .map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`)
         .join('');
       els.scenarioSelect.value = activeId;
     },
@@ -264,8 +281,28 @@ export function initControls(handlers) {
     setBusy(busy) {
       els.runBtn.disabled = busy;
       if (els.applyCustom) els.applyCustom.disabled = busy;
-      if (els.applyScenario) els.applyScenario.disabled = busy;
-      if (els.applyWeights) els.applyWeights.disabled = busy;
+      els.scenarioSelect.disabled = busy;
+      if (els.scenarioType) els.scenarioType.disabled = busy;
+      if (els.scenarioSeed) els.scenarioSeed.disabled = busy;
+      if (els.rerollScenarioSeed) els.rerollScenarioSeed.disabled = busy;
+      if (els.generateScenario) els.generateScenario.disabled = busy;
+      els.routeMode.disabled = busy;
+      els.repeats.disabled = busy;
+      els.warmup.disabled = busy;
+      els.stopCount.disabled = busy;
+      els.mapFile.disabled = busy;
+      els.mapPath.disabled = busy;
+      els.mapPathLoad.disabled = busy;
+      for (const chip of els.mapFolder.querySelectorAll('button')) chip.disabled = busy;
+      for (const input of els.algoTunables.querySelectorAll('input, select')) input.disabled = busy;
+      for (const input of Object.values(els.weights)) input.disabled = busy;
+      for (const input of Object.values(els.custom)) {
+        if (input === els.custom.type || input === els.custom.nodes) {
+          input.disabled = busy || !networkInputsEnabled;
+        } else {
+          input.disabled = busy;
+        }
+      }
       els.runBtn.textContent = busy ? 'Running…' : 'Run benchmark';
     },
 
@@ -278,8 +315,14 @@ export function initControls(handlers) {
       els.custom.seed.value = String(config.seed ?? 20260913);
     },
 
+    setGeneratorValues(config = {}) {
+      if (config.type && els.scenarioType) els.scenarioType.value = config.type;
+      if (config.seed !== undefined && els.scenarioSeed) els.scenarioSeed.value = String(config.seed);
+    },
+
     readWeights,
     readDisplay,
+    readCustomConfig,
     setMapStatus,
     setMapLabel,
     setFolderFiles,
@@ -365,6 +408,7 @@ export function initControls(handlers) {
    * them from looking like they do something.
    */
   function setNetworkInputsEnabled(enabled) {
+    networkInputsEnabled = enabled;
     for (const input of [els.custom.type, els.custom.nodes]) {
       input.disabled = !enabled;
     }
@@ -416,10 +460,18 @@ export function initControls(handlers) {
     };
   }
 
+  function readGeneratorConfig() {
+    return {
+      type: els.scenarioType ? els.scenarioType.value : 'normal',
+      seed: els.scenarioSeed ? readPositiveInt(els.scenarioSeed, 20260913, 1, 99999999) : 20260913,
+      repeat: readPositiveInt(els.repeats, 7, 1, 200),
+    };
+  }
+
   function readCustomConfig() {
     return {
       type: els.custom.type.value,
-      targetNodes: readPositiveInt(els.custom.nodes, 4000, 50, 20000),
+      targetNodes: readPositiveInt(els.custom.nodes, 4000, 100, 20000),
       elevationAmplitude: readPositiveInt(els.custom.elevation, 60, 0, 400),
       trafficLevel: readPositiveInt(els.custom.traffic, 40, 0, 100) / 100,
       closures: readPositiveInt(els.custom.closures, 25, 0, 1000),
@@ -439,10 +491,10 @@ export function initControls(handlers) {
 
   function readWeights() {
     return {
-      time: readFloat(els.weights.time, 1),
-      distance: readFloat(els.weights.distance, 0),
-      climb: readFloat(els.weights.climb, 0.5),
-      descent: readFloat(els.weights.descent, 0.15),
+      time: readNonNegativeFloat(els.weights.time, 1),
+      distance: readNonNegativeFloat(els.weights.distance, 0),
+      climb: readNonNegativeFloat(els.weights.climb, 0.5),
+      descent: readNonNegativeFloat(els.weights.descent, 0.15),
     };
   }
 }
@@ -458,11 +510,15 @@ function readPositiveInt(input, fallback, min, max) {
   return clamped;
 }
 
-function readFloat(input, fallback) {
+function readNonNegativeFloat(input, fallback) {
   const v = Number(input.value);
   if (!Number.isFinite(v)) {
     input.value = String(fallback);
     return fallback;
+  }
+  if (v < 0) {
+    input.value = '0';
+    return 0;
   }
   return v;
 }

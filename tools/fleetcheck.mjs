@@ -176,7 +176,7 @@ console.log('\nVariants and edge cases');
 {
   const cfg = {
     name: 'naga', seed: 3,
-    map: { type: 'geojson', path: 'data/Naga_City_roads.geojson' },
+    map: { type: 'geojson', path: 'data/Naga_City_boundary_roads.geojson' },
     depot: { at: [0.5, 0.5] },
     trucks: [{ id: 'T1' }, { id: 'T2' }],
     bins: { random: { count: 10 } },

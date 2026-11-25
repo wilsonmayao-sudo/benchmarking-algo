@@ -576,7 +576,7 @@
     "unload_time_s": 240,
     "dt_s": 1,
     "max_time_s": 14400,
-    "bin_capacity_kg": 120,
+    "bin_capacity_kg": 168,
     "fill_thresholds": {
       "medium": 40,
       "high": 75
@@ -644,7 +644,7 @@
       "name": "Bin 6 (commercial)",
       "node": "C6",
       "fill": 100,
-      "capacity_kg": 350,
+      "capacity_kg": 490,
       "truck": "T1"
     },
     {
@@ -704,7 +704,7 @@
       {
         "time_s": 600,
         "type": "ROAD_CLOSURE",
-        "edge": "E3-F3",
+        "edge": "E2-F2",
         "note": "water-main repair — corridor to the disposal site"
       },
       {
@@ -725,7 +725,7 @@
       {
         "time_s": 1500,
         "type": "ROAD_REOPEN",
-        "edge": "E3-F3",
+        "edge": "E2-F2",
         "note": "repair finished"
       }
     ],

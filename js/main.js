@@ -7,7 +7,13 @@
  *     registerAlgorithm(myAlgorithm);
  */
 
-import { SCENARIOS, CUSTOM_SCENARIO_DEFAULTS, scenarioFromCustom, scenarioFromCityMap } from './data/scenarios.js';
+import {
+  SCENARIOS,
+  CUSTOM_SCENARIO_DEFAULTS,
+  scenarioFromCustom,
+  scenarioFromCityMap,
+  scenarioFromType,
+} from './data/scenarios.js';
 import { buildTestCase, applyWeights } from './data/testCaseBuilder.js';
 import { parseCityMap } from './data/cityMapLoader.js';
 import { DEFAULT_WEIGHTS } from './core/costModel.js';
@@ -21,6 +27,7 @@ import { NetworkView } from './ui/networkView.js';
 import { Playback } from './ui/playback.js';
 import {
   renderVerdict,
+  renderComparisonChart,
   renderResultsTable,
   renderComparisonTable,
   renderRunsTable,
@@ -69,6 +76,7 @@ const state = {
   weights: { ...DEFAULT_WEIGHTS },
   display: { explored: true, closed: true, traffic: true, elevation: true },
   viewMode: 'overlay',
+  routeMode: 'trip',
   /** Parsed city map, when the user has imported one. */
   cityMap: null,
   testCase: null,
@@ -82,6 +90,8 @@ const state = {
 const els = {
   views: document.getElementById('views'),
   verdict: document.getElementById('verdict'),
+  resultsChart: document.getElementById('resultsChart'),
+  resultsTablesWrap: document.getElementById('resultsTablesWrap'),
   resultsTable: document.getElementById('resultsTable'),
   comparisonTable: document.getElementById('comparisonTable'),
   runsTable: document.getElementById('runsTable'),
@@ -140,6 +150,45 @@ const controls = initControls({
     controls.setProgress(0, `Applied ${scenario.name} (${netLabel}). Click "Run benchmark" to test.`);
   },
 
+  onGenerateScenario(config) {
+    const isCityMapActive = !!(state.scenario && state.scenario.cityMap);
+    const custom = controls.readCustomConfig ? controls.readCustomConfig() : null;
+    const scenario = scenarioFromType(config.type, {
+      seed: config.seed,
+      repeat: config.repeat,
+      cityMap: isCityMapActive ? state.cityMap : null,
+      networkType: custom ? custom.type : 'grid',
+      targetNodes: custom ? custom.targetNodes : undefined,
+    });
+
+    const existingIdx = state.scenarios.findIndex((s) => s.id === scenario.id);
+    if (existingIdx >= 0) {
+      state.scenarios[existingIdx] = scenario;
+    } else {
+      state.scenarios = [...state.scenarios, scenario];
+    }
+
+    controls.setScenarioList(state.scenarios, scenario.id);
+    loadScenario(scenario);
+    applyViewBox(null);
+    controls.setCustomValues({
+      type: scenario.network ? scenario.network.type : 'grid',
+      targetNodes: scenario.network ? scenario.network.targetNodes : 4000,
+      elevationAmplitude: scenario.elevation.amplitude,
+      trafficLevel: scenario.traffic.level,
+      closures: scenario.closures.count,
+      seed: scenario.seed,
+      repeat: scenario.repeat,
+    });
+    controls.setGeneratorValues({ type: scenario.scenarioType, seed: scenario.seed });
+
+    const netLabel = scenario.network
+      ? `${scenario.network.type} · ${fmtInt(state.testCase.meta.nodeCount)} nodes`
+      : 'imported map';
+    controls.setStatus('Generated scenario', 'ok');
+    controls.setProgress(0, `Generated ${scenario.name} (${netLabel}, seed ${scenario.seed}). Click "Run benchmark" to test.`);
+  },
+
   onCityMap(files) {
     loadCityMap(files);
   },
@@ -153,8 +202,10 @@ const controls = initControls({
   },
 
   onRouteMode(mode) {
+    state.routeMode = mode;
     // Route mode changes what a run means, so previous results no longer describe it.
     clearResults();
+    renderLegend(els.legend, ALGORITHMS, state.display, state.routeMode);
     controls.setStatus('Route mode changed', '');
     controls.setProgress(0, mode === 'round'
       ? 'Collection round selected — set the number of pickup points and run the benchmark.'
@@ -195,7 +246,7 @@ const controls = initControls({
   onDisplay(display) {
     state.display = display;
     for (const view of Object.values(views)) view.setOptions(display);
-    renderLegend(els.legend, ALGORITHMS, state.display);
+    renderLegend(els.legend, ALGORITHMS, state.display, state.routeMode);
     renderVisibleViews();
   },
 
@@ -266,7 +317,15 @@ function applyCityMapFiles(files, label) {
     for (const warning of warnings) console.warn('[city map]', warning);
 
     loadScenario(scenario);
-    controls.setCustomValues({ ...CUSTOM_SCENARIO_DEFAULTS, seed: scenario.seed, repeat: scenario.repeat });
+    controls.setCustomValues({
+      ...CUSTOM_SCENARIO_DEFAULTS,
+      elevationAmplitude: scenario.elevation.amplitude,
+      trafficLevel: scenario.traffic.level,
+      closures: scenario.closures.count,
+      seed: scenario.seed,
+      repeat: scenario.repeat,
+    });
+    controls.setGeneratorValues({ seed: scenario.seed });
   } catch (error) {
     console.error(error);
     controls.setMapStatus(`Could not load the map: ${error.message}`, 'error', error.stack || '');
@@ -344,6 +403,7 @@ function loadScenario(scenario) {
   state.scenario = scenario;
   controls.setScenarioDescription(scenario.description || '');
   controls.setRepeats(scenario.repeat || 5);
+  controls.setGeneratorValues({ type: scenario.scenarioType, seed: scenario.seed });
   syncNetworkInputs();
 
   state.testCase = buildTestCase(scenario, state.weights);
@@ -465,6 +525,8 @@ function applyLayers() {
 
 function renderResults() {
   renderVerdict(els.verdict, state.run);
+  renderComparisonChart(els.resultsChart, state.run);
+  if (els.resultsTablesWrap) els.resultsTablesWrap.hidden = !state.run;
   renderResultsTable(els.resultsTable, state.run);
   renderComparisonTable(els.comparisonTable, state.run);
   renderRunsTable(els.runsTable, state.run);
@@ -477,6 +539,8 @@ function renderResults() {
 function clearResults() {
   state.run = null;
   els.verdict.textContent = 'No benchmark has been run yet for this scenario.';
+  renderComparisonChart(els.resultsChart, null);
+  if (els.resultsTablesWrap) els.resultsTablesWrap.hidden = true;
   els.resultsTable.innerHTML = '';
   els.comparisonTable.innerHTML = '';
   els.runsTable.innerHTML = '';
@@ -527,6 +591,9 @@ controls.setCustomValues(CUSTOM_SCENARIO_DEFAULTS);
 controls.setScenarioList(state.scenarios, state.scenario.id);
 controls.setStatus('Ready', '');
 controls.setTunables(getTunableGroups());
-renderLegend(els.legend, ALGORITHMS, state.display);
+renderLegend(els.legend, ALGORITHMS, state.display, state.routeMode);
 loadScenario(state.scenario);
 refreshMapFolder();
+if (location.protocol !== 'file:') {
+  loadCityMapFromPaths('data/Naga_City_boundary_roads.geojson');
+}

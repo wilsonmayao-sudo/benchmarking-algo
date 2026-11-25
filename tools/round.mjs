@@ -281,7 +281,7 @@ bar('5. THE ANSWER');
   const ratio = (entry, r) => r.timeWithPrep.avg / entry.base.timeWithPrep.avg;
 
   console.log(
-    `  One round of ${STOPS} pickup points (${last.base.legCount} legs), prep paid every round:`,
+    `  One round of ${last.stops} pickup points (${last.base.legCount} legs), prep paid every round:`,
   );
   console.log(
     `    Dynamic A* ${num(ratio(last, last.dyn))}x A*   ·   ALT ${num(ratio(last, last.alt))}x A*`,

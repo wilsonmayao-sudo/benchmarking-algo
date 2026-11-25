@@ -11,8 +11,8 @@
  * Implementation notes
  *  • Frontier        : binary min-heap (`MinHeap`), shared with every other algorithm
  *  • Duplicate policy: lazy deletion — stale entries are skipped with a `closed` flag
- *  • Heuristic       : `costModel.heuristic()` — admissible and consistent, so the
- *                      returned path is optimal with respect to the cost model
+ *  • Cost & Heuristic: physical road distance (metres) and `costModel.euclidean()`,
+ *                      so static A* finds the shortest-distance path without traffic or closures
  *  • Tie-breaking    : insertion order (deterministic, reproducible runs)
  *
  * Counter definitions (identical for every algorithm)

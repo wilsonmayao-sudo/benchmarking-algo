@@ -135,7 +135,9 @@ export async function runBenchmark({
       validPath: repEval.valid,
       reason: repEval.reason || '',
 
-      path: repEval.valid ? representative.result.path : null,
+      path: repResult.path && repResult.path.length > 0 && Number.isFinite(repEval.distance)
+        ? repResult.path
+        : null,
       exploredNodes: repResult.exploredNodes || null,
 
       time: summarize(entries.map((e) => e.ms)),
@@ -205,10 +207,10 @@ export function compareResults(results, baselineId = BASELINE_ID) {
     if (!baseline || isBaseline) {
       return {
         id: r.id, name: r.name, color: r.color, isBaseline,
-        comparable: false,
+        comparable: false, baselineInvalid: false,
         timeDeltaPct: NaN, speedup: NaN, exploredDeltaPct: NaN,
         expandedDeltaPct: NaN, arcsDeltaPct: NaN,
-        costDeltaPct: NaN, distanceDeltaPct: NaN,
+        costDeltaPct: NaN, distanceDeltaPct: NaN, travelTimeDeltaPct: NaN,
         sameRoute: isBaseline, betterRoute: false,
       };
     }
@@ -228,6 +230,7 @@ export function compareResults(results, baselineId = BASELINE_ID) {
       color: r.color,
       isBaseline: false,
       comparable,
+      baselineInvalid: !baseline.valid,
       timeDeltaPct: pctChange(r.time.avg, baseline.time.avg),
       speedup: ratio(baseline.time.avg, r.time.avg),
       exploredDeltaPct: pctChange(r.nodesExplored.avg, baseline.nodesExplored.avg),
@@ -235,10 +238,10 @@ export function compareResults(results, baselineId = BASELINE_ID) {
       arcsDeltaPct: pctChange(r.arcsRelaxed.avg, baseline.arcsRelaxed.avg),
       costDeltaPct,
       distanceDeltaPct: pctChange(r.distance.avg, baseline.distance.avg),
+      travelTimeDeltaPct: pctChange(r.travelTime.avg, baseline.travelTime.avg),
       sameRoute,
-      // With an admissible heuristic, A* is optimal — a negative cost delta means
-      // the other algorithm found a genuinely cheaper route (weighted / suboptimal
-      // search, or a relaxed optimality guarantee).
+      // A negative cost delta means this algorithm found a genuinely cheaper route under
+      // the shared cost model (e.g. avoiding congestion, steep climbs, or closed roads).
       betterRoute: Number.isFinite(costDeltaPct) && costDeltaPct < -1e-6,
     };
   });

@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const R = new URL('../', import.meta.url).href;
 const readText = async (p) => readFileSync(join(root, p), 'utf8');
-const { loadScenario } = await import(R + 'js/sim/config/scenarioLoader.js');
+const { loadScenario, applyScenarioType } = await import(R + 'js/sim/config/scenarioLoader.js');
 const { Simulation } = await import(R + 'js/sim/simulation.js');
+const { selfCrosses, polygonArea } = await import(R + 'js/sim/fleet/routeAreas.js');
 const A = await import(R + 'js/fleetui/areas.js');
 let ok = 0, bad = 0;
 const check = (name, cond) => { cond ? ok++ : bad++; console.log(`${cond ? '✓' : '✗'} ${name}`); };
@@ -16,7 +17,10 @@ const check = (name, cond) => { cond ? ok++ : bad++; console.log(`${cond ? '✓'
 const cfg = JSON.parse(await readText('data/scenarios/naga-swmo-schedule.json'));
 const world = await loadScenario(cfg, { readText, overrides: { noEvents: true } });
 const stops = A.readStops(await readText(cfg.test_areas.schedule), world.geo);
-const schedule = A.scheduleZones(stops, world.trucks);
+const scheduleGeo = cfg.test_areas.schedule_areas ? JSON.parse(await readText(cfg.test_areas.schedule_areas)) : null;
+const scheduleBorders = scheduleGeo ? A.boundaryZones(scheduleGeo, world.geo) : null;
+const schedule = A.scheduleZones(stops, world.trucks, scheduleBorders);
+const legacySchedule = A.scheduleZones(stops, world.trucks);
 const borders = A.boundaryZones(JSON.parse(await readText(cfg.test_areas.boundaries)), world.geo);
 const city = borders.find((z) => z.kind === 'city');
 const barangays = borders.filter((z) => z.kind === 'barangay');
@@ -41,6 +45,44 @@ check('AREA-8: its truck, its bins', f.trucks.has('TRK-16') && f.bins.size > 0 &
 check('trucks parked at the depot are not "inside"', f.here.size === 0 && A.fleetIn(sim, city).here.size === 0);
 for (let i = 0; i < 600; i++) sim.step();
 check('driving trucks are inside the city', A.fleetIn(sim, city).here.size > 0);
+check('all 17 schedule polygons are simple (no self-crossings)', schedule.every((z) => z.size > 0 && z.rings.every((r) => !selfCrosses(r))));
+check('all 17 schedule areas are single continuous polygons (no disconnected fragments)',
+  schedule.every((z) => z.rings.length === 1) &&
+  (!scheduleGeo || scheduleGeo.features.every((f) => f.geometry.type === 'Polygon' && f.properties.ring_count === 1)));
+check('schedule polygon vertices stay inside Naga City (30 m tolerance)', (() => {
+  const step = 30;
+  return schedule.every((z) => z.rings.every((r) => r.every(([x, y]) =>
+    A.inZone(city, x, y) || A.inZone(city, x + step, y) || A.inZone(city, x - step, y) ||
+    A.inZone(city, x, y + step) || A.inZone(city, x, y - step))));
+})());
+const osmAcc = scheduleGeo?.validation?.overall_osm_accuracy_pct ?? 0;
+check(`OSM grounding accuracy >= 80% (${osmAcc}%)`, osmAcc >= 80);
+const newSum = schedule.reduce((s, z) => s + z.rings.reduce((rs, r) => rs + polygonArea(r), 0), 0);
+const legSum = legacySchedule.reduce((s, z) => s + z.rings.reduce((rs, r) => rs + polygonArea(r), 0), 0);
+check(`street-bounded footprint tighter than convex hulls (${(newSum / 1e6).toFixed(2)} < ${(legSum / 1e6).toFixed(2)} km²)`, newSum < legSum);
+
+const expectedCodes = ['AREA-1', 'AREA-2A', 'AREA-2B', 'AREA-3', 'AREA-4', 'AREA-5', 'AREA-6', 'AREA-7', 'AREA-8', 'AREA-9', 'AREA-10', 'AREA-11', 'AREA-12', 'AREA-13', 'AREA-15', 'COMPACTOR', 'FLEET-CLEARING'];
+check('all 17 schedule areas sorted numerically with display labels and metadata',
+  JSON.stringify(schedule.map((z) => z.code)) === JSON.stringify(expectedCodes) &&
+  schedule.every((z) => z.displayName && z.shift && z.days.length > 0 && z.barangays.length > 0 && z.locations.length > 0));
+
+const naga14Cfg = JSON.parse(await readText('data/scenarios/naga-14-trucks.json'));
+check('Normal/Worst/Randomized cases preserve test_areas schedule & schedule_areas',
+  ['normal', 'worst', 'random'].every((kind) => {
+    const gen = applyScenarioType(naga14Cfg, kind, 20260913);
+    return gen.test_areas?.schedule === naga14Cfg.test_areas.schedule &&
+      gen.test_areas?.schedule_areas === naga14Cfg.test_areas.schedule_areas &&
+      gen.test_areas?.boundaries === naga14Cfg.test_areas.boundaries &&
+      Boolean(gen.bins?.random);
+  }));
+
+check('all 17 schedule areas contain reachable road nodes for isolated benchmarking',
+  schedule.every((z) => {
+    for (let i = 0; i < world.graph.nodeCount; i++) {
+      if (world.allowed[i] && i !== world.depot && i !== world.disposal && A.inZone(z, world.graph.x[i], world.graph.y[i])) return true;
+    }
+    return false;
+  }));
 
 console.log(`\n${ok} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

@@ -26,7 +26,7 @@ export function summarize(values) {
 
   let variance = 0;
   for (const v of finite) variance += (v - avg) * (v - avg);
-  variance /= finite.length;
+  variance /= finite.length > 1 ? finite.length - 1 : 1;
 
   const sorted = [...finite].sort((a, b) => a - b);
   const mid = sorted.length >> 1;

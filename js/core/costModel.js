@@ -33,7 +33,13 @@ export class CostModel {
    */
   constructor(graph, weights = {}) {
     this.graph = graph;
-    this.weights = { ...DEFAULT_WEIGHTS, ...weights };
+    const merged = { ...DEFAULT_WEIGHTS, ...weights };
+    this.weights = {
+      time: Math.max(0, Number.isFinite(merged.time) ? merged.time : DEFAULT_WEIGHTS.time),
+      distance: Math.max(0, Number.isFinite(merged.distance) ? merged.distance : DEFAULT_WEIGHTS.distance),
+      climb: Math.max(0, Number.isFinite(merged.climb) ? merged.climb : DEFAULT_WEIGHTS.climb),
+      descent: Math.max(0, Number.isFinite(merged.descent) ? merged.descent : DEFAULT_WEIGHTS.descent),
+    };
 
     const total = graph.arcCount;
     this.cost = new Float64Array(total); // generalized cost per arc
@@ -61,7 +67,7 @@ export class CostModel {
 
       const speed = g.edgeSpeedLimit[e] * g.edgeTraffic[e]; // effective m/s
       const len = g.edgeLength[e];
-      const t = len / speed;
+      const t = speed > 0 ? len / speed : Infinity;
 
       const delta = g.elevation[v] - g.elevation[u];
       const climb = delta > 0 ? delta : 0;

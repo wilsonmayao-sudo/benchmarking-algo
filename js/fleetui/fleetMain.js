@@ -3,7 +3,7 @@
  * animation loop and wires the controls. All simulation logic lives in js/sim/.
  */
 
-import { loadScenario, randomRoadEvent } from '../sim/config/scenarioLoader.js';
+import { loadScenario, applyScenarioType, randomRoadEvent } from '../sim/config/scenarioLoader.js';
 import { Simulation } from '../sim/simulation.js';
 import { toJSON, toCSV } from '../sim/metrics.js';
 import { fmtClock } from '../sim/fleet/eta.js';
@@ -20,6 +20,7 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   config: null,      // parsed JSON
+  effectiveConfig: null, // config after scenario-type & seed generation
   sim: null,
   playing: false,
   speed: 30,         // simulated seconds per real second
@@ -27,8 +28,10 @@ const state = {
   runs: [],          // summaries of finished runs (comparison table / CSV)
   recorded: false,   // current run already added to `runs`
   freshConfig: false, // a new config was just loaded → reset variant controls to its defaults
+  syncGeneratorCount: false, // adopt generated random-event count after preset/seed switch
   eventSeed: undefined, // set by "Re-roll"; undefined = the config's own random-event seed
   liveRng: null,     // RNG for "Random event now" (seeded per run → reproducible order)
+  initialJumpDone: false,
 };
 
 const map = new FleetMapView($('fleetCanvas'));
@@ -88,35 +91,61 @@ async function loadConfigFromText(text, name) {
 /** (Re)create the world + simulation from the config and the variant controls. */
 async function rebuild() {
   pause();
-  const cfg = state.config;
+  const baseCfg = state.config;
   const truckSel = $('optTrucks');
-  const total = (cfg.trucks || []).length;
+  const total = (baseCfg.trucks || []).length;
   if (truckSel.options.length !== total) {
     truckSel.innerHTML = Array.from({ length: total }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
     truckSel.value = String(total);
   }
   if (state.freshConfig) {
-    // New scenario: take its own random-event count, and keep crowded maps readable.
-    state.freshConfig = false;
     state.eventSeed = undefined;
+    const keepConfigured = Boolean(baseCfg.bins?.csv || baseCfg.map?.type === 'explicit');
+    $('optScenarioType').value = keepConfigured ? 'configured' : 'normal';
+    $('optSeed').value = String(baseCfg.seed ?? 20260913);
+  }
+
+  const scenarioType = $('optScenarioType').value;
+  const rawSeed = Math.round(Number($('optSeed').value));
+  const seedVal = Number.isFinite(rawSeed) && rawSeed >= 1
+    ? Math.min(99999999, rawSeed)
+    : (Number(baseCfg.seed) >= 1 ? Math.round(Number(baseCfg.seed)) : 20260913);
+  $('optSeed').value = String(seedVal);
+
+  const cfg = applyScenarioType(baseCfg, scenarioType, seedVal);
+  state.effectiveConfig = cfg;
+
+  const fromSchedule = Boolean(cfg.bins?.csv);
+  if (state.freshConfig || state.syncGeneratorCount) {
     $('optRandomCount').value = String(cfg.events?.random?.count ?? 0);
-    const fromSchedule = Boolean(cfg.bins?.csv);
-    const many = total > 6 || fromSchedule || (Array.isArray(cfg.bins) ? cfg.bins.length : cfg.bins?.random?.count ?? 0) > 40;
-    $('optEtaLabels').checked = map.options.etaLabels = !many;
-    $('optBinLabels').checked = map.options.binLabels = !many;
-    // "Schedule day" only applies to stops imported from the collection schedule CSV.
     $('optDayWrap').hidden = !fromSchedule;
     $('optDay').value = cfg.bins?.day ? String(cfg.bins.day).toLowerCase().slice(0, 3) : 'all';
+    if (state.freshConfig) {
+      const many = total > 6 || fromSchedule || (Array.isArray(cfg.bins) ? cfg.bins.length : cfg.bins?.random?.count ?? 0) > 40;
+      $('optEtaLabels').checked = map.options.etaLabels = !many;
+      $('optBinLabels').checked = map.options.binLabels = !many;
+    }
+    state.freshConfig = false;
+    state.syncGeneratorCount = false;
   }
+
   const overrides = {
     noEvents: !$('optEvents').checked,
     noRandomEvents: !$('optRandom').checked,
   };
-  if (cfg.bins?.csv) overrides.binDay = $('optDay').value;
+  if (scenarioType !== 'configured') {
+    overrides.scenarioType = scenarioType;
+    overrides.seed = seedVal;
+  } else if (seedVal !== (baseCfg.seed ?? 20260913)) {
+    overrides.seed = seedVal;
+  }
+  if (fromSchedule) overrides.binDay = $('optDay').value;
   const n = Number(truckSel.value);
   if (n < total) overrides.truckCount = n;
-  const count = Number($('optRandomCount').value);
-  if (Number.isInteger(count) && count >= 0 && count !== (cfg.events?.random?.count ?? 0)) overrides.randomEventCount = count;
+  const rawCount = Math.round(Number($('optRandomCount').value));
+  const count = Number.isFinite(rawCount) ? Math.max(0, Math.min(200, rawCount)) : 0;
+  $('optRandomCount').value = String(count);
+  if (count !== (cfg.events?.random?.count ?? 0)) overrides.randomEventCount = count;
   if (state.eventSeed !== undefined) overrides.eventSeed = state.eventSeed;
 
   const world = await loadScenario(cfg, { readText, overrides });
@@ -128,8 +157,8 @@ async function rebuild() {
   state.liveRng = mulberry32(((state.eventSeed ?? world.seed) + 101) >>> 0);
   const randomOn = $('optEvents').checked && $('optRandom').checked;
   $('eventSeedInfo').textContent = randomOn
-    ? `Random-event seed: ${state.eventSeed ?? cfg.events?.random?.seed ?? 'scenario default'}` +
-      `${state.eventSeed !== undefined ? ' (re-rolled)' : ''} — the same seed always gives the same events.`
+    ? `Seed ${state.eventSeed ?? cfg.events?.random?.seed ?? 'default'}` +
+      `${state.eventSeed !== undefined ? ' (re-rolled)' : ''} (same seed reproduces identical events).`
     : 'Random events are off.';
   const sameMap = map.setSimulation(state.sim);
   editor.attach(state.sim); // puts saved bins and routes back
@@ -148,15 +177,20 @@ async function rebuild() {
     `${world.name}: ${world.graph.nodeCount} nodes, ${world.graph.edgeCount} roads, ${world.trucks.length} trucks, ` +
     `${world.bins.length} bins, ${world.events.length} events.${importLine} ${world.description}`;
   $('btnExportJson').disabled = false;
-  setStatus('Ready — press Play');
+  setStatus('Ready');
 
   // fleet.html?at=850 opens the run already advanced to t = 850 s (handy for sharing a moment).
-  const at = Number(new URLSearchParams(location.search).get('at'));
-  if (at > 0) {
-    while (state.sim.time < at && !state.sim.finished) state.sim.step();
-    if (state.sim.finished) onFinished();
-    else setStatus(`Jumped to ${fmtClock(state.sim.time)} — press Play`);
+  if (!state.initialJumpDone) {
+    state.initialJumpDone = true;
+    const at = Number(new URLSearchParams(location.search).get('at'));
+    if (at > 0) {
+      while (state.sim.time < at && !state.sim.finished) state.sim.step();
+      if (state.sim.finished) onFinished();
+      else setStatus(`Jumped to ${fmtClock(state.sim.time)} — press Play`);
+    }
   }
+  map.render();
+  $('simClock').textContent = fmtClock(state.sim.time);
   refreshPanels(true);
 }
 
@@ -175,6 +209,7 @@ function frame(ts) {
   const dtReal = lastFrame ? Math.min(0.25, (ts - lastFrame) / 1000) : 0;
   lastFrame = ts;
   const sim = state.sim;
+  let stepped = false;
 
   if (sim && state.playing && !sim.finished) {
     state.carry += dtReal * state.speed;
@@ -182,14 +217,17 @@ function frame(ts) {
     while (state.carry >= dt && !sim.finished) {
       sim.step(dt);
       state.carry -= dt;
+      stepped = true;
     }
     if (sim.finished) onFinished();
   }
 
   if (sim) {
-    map.render();
-    $('simClock').textContent = fmtClock(sim.time);
-    if (ts - lastPanel > 250) { refreshPanels(); lastPanel = ts; }
+    if (stepped || map.fly || map.glide) {
+      map.render();
+      $('simClock').textContent = fmtClock(sim.time);
+    }
+    if (stepped && ts - lastPanel > 250) { refreshPanels(); lastPanel = ts; }
   }
   requestAnimationFrame(frame);
 }
@@ -199,7 +237,7 @@ function refreshPanels(full = false) {
   areas.refresh();
   renderTruckList($('truckList'), sim, map.focus);
   renderLog($('logList'), sim.logEntries, $('logFilter').value, areas.logFilter());
-  renderMetrics($('metricsTable'), sim.summary());
+  renderMetrics($('metricsTable'), sim.summary(), state.playing);
   renderTruckTable($('truckTable'), sim);
   editor.refresh();
   renderEventTable($('eventTable'), sim);
@@ -215,6 +253,8 @@ function onFinished() {
     state.recorded = true;
     $('btnExportCsv').disabled = false;
   }
+  map.render();
+  $('simClock').textContent = fmtClock(sim.time);
   refreshPanels(true);
 }
 
@@ -223,20 +263,23 @@ function onFinished() {
 function play() {
   if (!state.sim || state.sim.finished) return;
   state.playing = true;
-  $('btnPlay').innerHTML = $('btnPlay2').innerHTML = '&#10074;&#10074; Pause';
+  $('btnPlay').textContent = $('btnPlay2').textContent = 'Pause';
   setStatus('Running', 'running');
+  refreshPanels();
 }
 
 function pause() {
+  const wasPlaying = state.playing;
   state.playing = false;
-  $('btnPlay').innerHTML = $('btnPlay2').innerHTML = '&#9654; Play';
+  $('btnPlay').textContent = $('btnPlay2').textContent = 'Play';
   if (state.sim && !state.sim.finished) setStatus('Paused');
+  if (wasPlaying && state.sim && !state.sim.finished) refreshPanels();
 }
 
 function setStatus(text, kind = '') {
   const el = $('fleetStatus');
   el.textContent = text;
-  el.className = `pill ${kind}`;
+  el.className = `pill ${kind}`.trim();
 }
 
 function download(name, text, type) {
@@ -253,9 +296,12 @@ $('btnPlay2').addEventListener('click', () => (state.playing ? pause() : play())
 $('btnStep').addEventListener('click', () => {
   if (!state.sim || state.sim.finished) return;
   pause();
-  for (let i = 0; i < 10 && !state.sim.finished; i++) state.sim.step();
+  const end = state.sim.time + 10;
+  while (state.sim.time < end - 1e-9 && !state.sim.finished) state.sim.step();
+  map.render();
+  $('simClock').textContent = fmtClock(state.sim.time);
   if (state.sim.finished) onFinished();
-  refreshPanels();
+  else refreshPanels();
 });
 $('btnReset').addEventListener('click', () => state.config && rebuild().catch(fail));
 $('btnRunToEnd').addEventListener('click', () => {
@@ -267,6 +313,21 @@ $('optSpeed').addEventListener('change', (e) => { state.speed = Number(e.target.
 for (const id of ['optDay', 'optEvents', 'optRandom', 'optTrucks', 'optRandomCount']) {
   $(id).addEventListener('change', () => state.config && rebuild().catch(fail));
 }
+for (const id of ['optScenarioType', 'optSeed']) {
+  $(id).addEventListener('change', () => {
+    if (!state.config) return;
+    state.syncGeneratorCount = true;
+    state.eventSeed = undefined;
+    rebuild().catch(fail);
+  });
+}
+$('btnSeedReroll').addEventListener('click', () => {
+  if (!state.config) return;
+  $('optSeed').value = String(Math.floor(Math.random() * 89999999) + 10000000);
+  state.syncGeneratorCount = true;
+  state.eventSeed = undefined;
+  rebuild().catch(fail);
+});
 $('btnReroll').addEventListener('click', () => {
   if (!state.config) return;
   // A fresh seed moves every random event to new roads and times; the seed is shown so a
@@ -315,6 +376,7 @@ function placeLiveEvent(edge) {
     const blocked = entry.blocked.length ? ` · BLOCKED ${entry.blocked.join(', ')}` : '';
     liveMessage(`${fmtClock(sim.time)} ${type === 'ROAD_CLOSURE' ? 'closed' : 'slowed'} ${name}${who}${blocked}`, blocked ? 'err' : 'ok');
   }
+  map.render();
   refreshPanels();
 }
 
@@ -322,7 +384,7 @@ function setPicking(on) {
   if (on && map.editMode !== 'none') editor.setMode('none');
   map.setPickMode(on);
   $('btnPick').setAttribute('aria-pressed', String(on));
-  $('btnPick').innerHTML = on ? '&#10003; Picking — click roads (Esc to stop)' : '&#128433; Click a road';
+  $('btnPick').textContent = on ? 'Picking (Esc to stop)' : 'Pick road';
   if (on) liveMessage('Click any road on the map. Drag still pans.');
 }
 
@@ -334,7 +396,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && map.pick
 $('btnRandomNow').addEventListener('click', () => {
   const sim = state.sim;
   if (!sim || sim.finished) { liveMessage('The run has finished — press Reset to start a new one.', 'err'); return; }
-  const settings = state.config.events?.random || {};
+  const settings = (state.effectiveConfig || state.config).events?.random || {};
   // Prefer a road that is currently normal, so the event visibly changes something.
   let ev = null;
   for (let tries = 0; tries < 20; tries++) {
@@ -347,6 +409,7 @@ $('btnRandomNow').addEventListener('click', () => {
     ? `closed ${entry.edge} for ${Math.round(ev.duration / 60)} min`
     : `slowed ${entry.edge} ×${ev.factor} for ${Math.round(ev.duration / 60)} min`;
   liveMessage(`${fmtClock(sim.time)} random: ${what}${entry.rerouted.length ? ` · rerouted ${entry.rerouted.join(', ')}` : ''}`, 'ok');
+  map.render();
   refreshPanels();
 });
 
@@ -355,7 +418,7 @@ $('btnFullscreen').addEventListener('click', () => {
   else $('stage').requestFullscreen?.().catch((err) => liveMessage(`Full screen not available: ${err.message}`, 'err'));
 });
 document.addEventListener('fullscreenchange', () => {
-  $('btnFullscreen').innerHTML = document.fullscreenElement ? '&#x2715; Exit full screen' : '&#x26F6; Full screen';
+  $('btnFullscreen').textContent = document.fullscreenElement ? 'Exit full screen' : 'Full screen';
   map.render();
 });
 syncLiveInputs();
@@ -365,6 +428,7 @@ $('scenarioLoad').addEventListener('click', () => loadConfigFromPath($('scenario
 $('scenarioPath').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('scenarioLoad').click(); });
 $('scenarioFile').addEventListener('change', async (e) => {
   const file = e.target.files[0];
+  e.target.value = '';
   if (file) loadConfigFromText(await file.text(), file.name);
 });
 

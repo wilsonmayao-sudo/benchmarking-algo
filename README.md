@@ -651,16 +651,15 @@ trucks are the 14 active fleet units with their real `capacity_kg`. Each truck c
 area(s) in `trucks[].areas`. The *Schedule day* picker keeps only the stops collected that day.
 Stops more than 300 m from the mapped roads are left out. The page lists how many were left out, and `npm run fleet -- <file> --day mon` does the same headless.
 
-[`data/scenarios/naga-14-trucks.json`](data/scenarios/naga-14-trucks.json) is the same city with random bins: the real Naga City road map (whole city from OpenStreetMap, 19 744 junctions, 21 643 roads) drawn over
+[`data/scenarios/naga-14-trucks.json`](data/scenarios/naga-14-trucks.json) is the same city with random bins: the real Naga City road map (clipped to the Naga City boundary from OpenStreetMap, 14 374 junctions, 16 042 roads) drawn over
 OpenStreetMap street tiles, 14 trucks that all start and end at the depot, 98 random bins and
 12 random road events. The depot is the Solid Waste Management Office
 (13.618842, 123.1995803, from Google Maps); disposal uses the EcoLoop WebApp coordinates: SWMO - Sanitary Landfill, San Isidro
 (13.6212, 123.2576). The road file covers the landfill too, so disposal trips follow the real
 roads (the landfill is 19 m from the nearest mapped road). Pick the 3-truck sample from the scenario box.
 
-`data/Naga_City_roads.geojson` holds every drivable OpenStreetMap road in the box
-123.155–123.312 E, 13.595–13.680 N (© OpenStreetMap contributors, ODbL). The previous
-central-only file is kept as `data/Naga_City_roads.central-only.bak.geojson`.
+`data/Naga_City_boundary_roads.geojson` holds every drivable OpenStreetMap road inside the
+Naga City boundary (© OpenStreetMap contributors, ODbL).
 
 Markers use the same icons as the WebApp map: trucks (white disc, ring in the truck colour,
 number badge, and an ETA chip underneath, always shown), bins (trash icon on a tile coloured

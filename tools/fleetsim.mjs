@@ -8,6 +8,7 @@
  *   --no-events        ignore every road event (baseline run)
  *   --no-random        keep scheduled events, drop random ones
  *   --trucks <n>       use only the first n trucks from the config
+ *   --type <case>      schedule-independent case: normal | worst | random
  *   --seed <n>         override the scenario seed (changes random events / bins)
  *   --day <day>        schedule day for CSV-imported stops (mon … sun, or all)
  *   --compare          run a standard set of variants and write ONE comparison CSV:
@@ -23,7 +24,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync } from 'node:fs';
 import { resolve, dirname, basename, join } from 'node:path';
-import { loadScenario } from '../js/sim/config/scenarioLoader.js';
+import { loadScenario, applyScenarioType, FLEET_SCENARIO_TYPES } from '../js/sim/config/scenarioLoader.js';
 import { Simulation } from '../js/sim/simulation.js';
 import { toJSON, toCSV, truckRows } from '../js/sim/metrics.js';
 import { fmtDuration } from '../js/sim/fleet/eta.js';
@@ -37,7 +38,13 @@ const opt = (name, fallback) => {
 };
 const scenarioPath = resolve(args.find((a) => a.endsWith('.json')) || 'data/scenarios/sample-fleet.json');
 const outDir = resolve(opt('--out', 'results'));
+const scenarioType = opt('--type', null);
 const verbose = flag('--log');
+
+if (scenarioType && !FLEET_SCENARIO_TYPES[scenarioType]) {
+  console.error(`Unknown --type "${scenarioType}". Expected one of: ${Object.keys(FLEET_SCENARIO_TYPES).join(', ')}`);
+  process.exit(1);
+}
 
 const config = JSON.parse(readFileSync(scenarioPath, 'utf8'));
 const readText = async (p) => readFileSync(resolve(p), 'utf8'); // geojson maps resolve from cwd
@@ -45,7 +52,11 @@ const slug = basename(scenarioPath, '.json');
 
 // ------------------------------------------------------------------ run one
 async function runOnce(overrides, { quiet = false } = {}) {
-  const world = await loadScenario(config, { readText, overrides });
+  const effective = scenarioType
+    ? applyScenarioType(config, scenarioType, overrides.seed ?? config.seed)
+    : config;
+  const finalOverrides = scenarioType ? { scenarioType, ...overrides } : overrides;
+  const world = await loadScenario(effective, { readText, overrides: finalOverrides });
   const sim = new Simulation(world);
   const summary = sim.run();
 

@@ -471,6 +471,7 @@ function resetTrip(truck) {
 
 /** Share the bins between the route's trucks: equal slices going round the area. */
 function distribute(sim, route, bins, dirty) {
+  if (bins.length === 0) return;
   const trucks = routeTrucks(sim, route);
   const cx = bins.reduce((s, b) => s + b.x, 0) / bins.length;
   const cy = bins.reduce((s, b) => s + b.y, 0) / bins.length;
@@ -619,10 +620,11 @@ export function remainingPath(sim, truck) {
     const entry = entryNode(sim, route, at); // from the landfill it first drives back in
     if (entry >= 0) at = entry;
   }
+  const heuristic = route.router._h();
   for (const id of routeOrder(sim, truck, rest, at)) {
     const goal = sim.binsById.get(id).node;
     // Drawing only, so it bypasses the router's search statistics.
-    const res = astarSearch(sim.graph, at, goal, { weight, heuristic: () => 0 });
+    const res = astarSearch(sim.graph, at, goal, { weight, heuristic });
     if (!res.found) continue;
     arcs.push(...res.arcs);
     at = goal;

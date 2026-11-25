@@ -387,11 +387,11 @@ function singleEdgeTableToLines(table, warnings) {
     const lon2 = Number(row[columns.lon2]);
     if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) continue;
 
-    lines.push([[lon1, lat1, NaN], [lon2, lat2, NaN]]);
-    tags.push(rowTags(row, columns));
-
     const elev = columns.elevation !== undefined ? Number(row[columns.elevation]) : NaN;
     if (Number.isFinite(elev)) hasElevation = true;
+
+    lines.push([[lon1, lat1, elev], [lon2, lat2, elev]]);
+    tags.push(rowTags(row, columns));
   }
 
   if (lines.length === 0) throw new Error(`${table.name}: no rows had valid coordinates.`);

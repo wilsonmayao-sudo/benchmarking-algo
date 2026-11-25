@@ -23,7 +23,7 @@
 import { binColor } from '../sim/fleet/bins.js';
 import { truckXY } from '../sim/fleet/truck.js';
 import { numberOf, remainingPath } from '../sim/fleet/routes.js';
-import { pointInPolygon } from '../sim/fleet/routeAreas.js';
+import { pointInPolygon, polygonArea } from '../sim/fleet/routeAreas.js';
 import { fmtDuration } from '../sim/fleet/eta.js';
 
 /** Lucide icon paths (24×24), identical to the WebApp LiveFleetMap markers. */
@@ -353,6 +353,8 @@ export class FleetMapView {
     if (!sel) return;
     ctx.beginPath();
     this._zonePath(ctx, sel);
+    ctx.fillStyle = 'rgba(8, 145, 178, 0.10)';
+    ctx.fill('evenodd');
     ctx.lineJoin = 'round';
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 7;
@@ -361,7 +363,10 @@ export class FleetMapView {
     ctx.lineWidth = 4;
     ctx.stroke();
     this._drawStops(ctx, focus.stops);
-    const top = sel.rings.flat().reduce((a, b) => (b[1] > a[1] ? b : a));
+    const mainRing = sel.rings.length > 1
+      ? sel.rings.reduce((best, r) => (polygonArea(r) > polygonArea(best) ? r : best), sel.rings[0])
+      : sel.rings[0];
+    const top = mainRing.reduce((a, b) => (b[1] > a[1] ? b : a));
     this._tag(ctx, sel.name, this.tx(top[0]), Math.min(h - 12, Math.max(12, this.ty(top[1]) - 14)), '#67e8f9');
   }
 

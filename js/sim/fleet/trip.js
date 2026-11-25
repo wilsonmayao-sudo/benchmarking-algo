@@ -18,6 +18,7 @@ export function fmtTime(simSeconds) {
 
 /** "4 min", "1 hr 5 min", "less than 1 min". */
 export function fmtMin(seconds) {
+  if (!Number.isFinite(seconds)) return 'unknown';
   const m = Math.round(seconds / 60);
   if (m < 1) return 'less than 1 min';
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} hr${m % 60 ? ` ${m % 60} min` : ''}`;

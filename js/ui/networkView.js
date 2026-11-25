@@ -632,11 +632,15 @@ export class NetworkView {
       ctx.stroke();
 
       ctx.font = '600 11px "Segoe UI", system-ui, sans-serif';
-      const w = ctx.measureText(label).width + 10;
+      const w = ctx.measureText(label).width + 12;
+      const lx = Math.max(4, Math.min(this._cssW - w - 4, x + 9));
+      const ly = Math.max(4, Math.min(this._cssH - 22, y - 9));
       ctx.fillStyle = UI.labelBg;
-      ctx.fillRect(x + 9, y - 9, w, 16);
+      ctx.beginPath();
+      ctx.roundRect(lx, ly, w, 18, 4);
+      ctx.fill();
       ctx.fillStyle = UI.markerRing;
-      ctx.fillText(label, x + 14, y + 3);
+      ctx.fillText(label, lx + 6, ly + 13);
     };
 
     if (this.start >= 0) mark(this.start, UI.start, `S · ${this.startLabel}`);

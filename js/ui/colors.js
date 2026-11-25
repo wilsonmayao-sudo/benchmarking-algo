@@ -14,7 +14,7 @@ export const UI = {
   goal: '#ef4444',
   stop: '#f59e0b',
   markerRing: '#e6edf3',
-  text: '#8b9bb0',
+  text: '#94a3b8',
   labelBg: 'rgba(15, 23, 42, 0.88)',
 };
 

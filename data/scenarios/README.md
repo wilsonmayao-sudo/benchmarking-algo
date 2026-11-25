@@ -69,7 +69,7 @@ delay it schedules the "delay cleared" event.
 |---|---|---|---|
 | `explicit` | `nodes: [{id,x,y}]` (metres), `edges: [{from,to,id?,length?,oneway?}]` | node id `"C3"` | `"C3-D3"` (either direction) or the edge `id` |
 | `generated` | `network: {type:"grid"\|"random", targetNodes, width, height}` | index `42` or `{"at":[fx,fy]}` | index `17` or `{"from":12,"to":13}` |
-| `geojson` | `path: "data/Naga_City_roads.geojson"` (GeoJSON / Overpass / CSV) | same as generated | same as generated |
+| `geojson` | `path: "data/Naga_City_boundary_roads.geojson"` (GeoJSON / Overpass / CSV) | same as generated | same as generated |
 
 `test_areas` (optional, imported maps) fills the fleet page's *Testing area* list: `schedule` = a collection-schedule CSV (one area per `area_code`), `boundaries` = a GeoJSON of polygons with `kind` (`city`, `district` or `barangay`) and `name`.
 

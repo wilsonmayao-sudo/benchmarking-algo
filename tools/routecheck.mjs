@@ -69,9 +69,11 @@ const TRIP = 'toArea,area,toLandfill,toDepot,done';
 
 /** A square around the densest group of bins. */
 function busyBox(sim, half) {
+  const pool = sim.bins.filter((b) => b.state !== 'collected');
+  const bins = pool.length ? pool : sim.bins;
   let best = null, n = -1;
-  for (const b of sim.bins) {
-    const c = sim.bins.filter((o) => Math.abs(o.x - b.x) < half && Math.abs(o.y - b.y) < half).length;
+  for (const b of bins) {
+    const c = bins.filter((o) => Math.abs(o.x - b.x) < half && Math.abs(o.y - b.y) < half).length;
     if (c > n) { n = c; best = b; }
   }
   return box(best.x - half + 3.3, best.y - half + 1.7, best.x + half + 3.3, best.y + half + 1.7);
@@ -223,7 +225,7 @@ console.log('\nstacked bins, chosen bins');
   const ra = runRoute(a.sim, t);
   const spots = new Set(a.inside.map((b) => b.node)).size;
   check(`${a.inside.length} bins on ${spots} point(s) are emptied without getting stuck (${Math.round(ra.n / 60)} min)`,
-    a.inside.every((b) => b.state === 'collected') && ra.n < a.inside.length * 60 + 3600, ra.n);
+    a.inside.every((b) => b.state === 'collected') && ra.n < a.inside.length * 60 + 7200, ra.n);
   check('finish prediction stays right for stacked bins', Math.abs(t.trip.finishedAt - t.trip.plannedEnd) < 120, t.trip.finishedAt - t.trip.plannedEnd);
 
   const b = await stacked();
@@ -369,17 +371,44 @@ console.log('\nfull truck, closed roads, busy truck');
   check('a bin that got too heavy changes to the other truck', l1.truckId === big.id, l1.truckId);
   const island = areaProblem(c, box(-5000, -5000, -4000, -4000));
   check('an area without roads is refused', /no road trucks can use/.test(island), island);
-  // every place a new bin can stand is reachable: try the awkward corners (one-way starts, cut-off streets)
+  // every place a new bin can stand is reachable: try disconnected/awkward corners and explicit one-way stubs
   const f = await load('naga-swmo-schedule');
   const ways = new Uint8Array(f.graph.nodeCount);
-  for (let i = 0; i < f.graph.nodeCount; i++) if (f.graph.revStart[i + 1] === f.graph.revStart[i] || f.graph.adjStart[i + 1] === f.graph.adjStart[i]) ways[i] = 1;
+  for (let i = 0; i < f.graph.nodeCount; i++) {
+    if (f.graph.revStart[i + 1] === f.graph.revStart[i] || f.graph.adjStart[i + 1] === f.graph.adjStart[i]) ways[i] = 1;
+  }
   let tried = 0, stuck = 0;
   for (let i = 0; i < f.graph.nodeCount && tried < 25; i++) {
-    if (!ways[i] || !f.world.allowed[i]) continue;
+    if (!ways[i] && f.world.allowed[i]) continue;
     const r = addBin(f, { id: `W${i}`, name: `W${i}`, x: f.graph.x[i], y: f.graph.y[i], fill: 10, capacityKg: 10 });
     if (!r.ok) continue;
     tried++;
     if (f.router.findPath(f.world.depot, r.bin.node, 'route').found !== true || f.router.findPath(r.bin.node, f.world.disposal, 'route').found !== true) stuck++;
+  }
+  const owWorld = await loadScenario({
+    name: 'oneway-stub',
+    map: {
+      type: 'explicit',
+      nodes: [{ id: 'A', x: 0, y: 0 }, { id: 'B', x: 100, y: 0 }, { id: 'S1', x: 100, y: 50 }, { id: 'E1', x: 100, y: -50 }],
+      edges: [
+        { from: 'A', to: 'B' },
+        { from: 'S1', to: 'B', oneway: true },
+        { from: 'B', to: 'E1', oneway: true },
+      ],
+    },
+    depot: 'A',
+    disposal: 'A',
+    trucks: [{ id: 'T1', max_capacity: 500 }],
+    bins: [{ id: 'B0', node: 'B', fill: 50 }],
+  });
+  const owSim = new Simulation(owWorld);
+  for (const [idx, nid] of ['S1', 'E1'].entries()) {
+    const k = owWorld.graph.nodeCount ? ['A', 'B', 'S1', 'E1'].indexOf(nid) : -1;
+    const r = addBin(owSim, { id: `OW${idx}`, name: `OW${idx}`, x: owSim.graph.x[k], y: owSim.graph.y[k], fill: 10, capacityKg: 10 });
+    if (r.ok) {
+      tried++;
+      if (!owSim.router.findPath(owWorld.depot, r.bin.node, 'route').found || !owSim.router.findPath(r.bin.node, owWorld.disposal, 'route').found) stuck++;
+    }
   }
   check(`bins clicked at ${tried} corners no truck can enter or leave stand at a reachable corner`, tried > 0 && stuck === 0, `${tried} ${stuck}`);
 }

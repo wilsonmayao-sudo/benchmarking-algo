@@ -10,6 +10,8 @@
  * and JIT warm-up noise swamp the real difference between the algorithms.
  */
 
+import { mulberry32, randInt, randRange } from '../core/rng.js';
+
 /** The shared base network used by scenarios 1–5. */
 const BASE_NETWORK = {
   type: 'grid',
@@ -224,5 +226,123 @@ export function scenarioFromCustom(config, cityMap = null) {
     elevation: { amplitude: c.elevationAmplitude, hills: 5, trend: 0.4 },
     traffic: { level: c.trafficLevel, hotspots: 4, radius: 0.25 },
     closures: { count: c.closures, maxFraction: 0.25 },
+  };
+}
+
+/**
+ * Selectable schedule-independent scenario presets for reproducible pathfinding benchmarks.
+ */
+export const SCENARIO_TYPE_META = {
+  normal: {
+    id: 'gen-normal',
+    label: 'Normal Case',
+    description: 'Moderate everyday congestion, gentle terrain relief, and isolated roadworks.',
+  },
+  worst: {
+    id: 'gen-worst',
+    label: 'Worst Case',
+    description: 'Peak-hour severe congestion, steep hills, and widespread road closures.',
+  },
+  random: {
+    id: 'gen-random',
+    label: 'Randomized Case',
+    description: 'Seeded random mix of traffic hotspots, terrain amplitude, and road closures.',
+  },
+};
+
+/**
+ * Generate a deterministic scenario from a scenario type and numeric seed, independent
+ * of any collection schedule. Uses the active imported city map when supplied.
+ */
+export function scenarioFromType(type, options = {}) {
+  const key = Object.prototype.hasOwnProperty.call(SCENARIO_TYPE_META, type) ? type : 'normal';
+  const meta = SCENARIO_TYPE_META[key];
+  const rawSeed = Number(options.seed);
+  const seed = Number.isFinite(rawSeed) && rawSeed >= 1
+    ? Math.min(99999999, Math.round(rawSeed))
+    : BASE_SEED;
+  const repeat = Number.isFinite(Number(options.repeat)) && Number(options.repeat) >= 1
+    ? Math.min(200, Math.round(Number(options.repeat)))
+    : 7;
+  const map = options.cityMap || null;
+  const rng = mulberry32(seed >>> 0);
+
+  let trafficLevel;
+  let hotspots;
+  let radius;
+  let elevationAmplitude;
+  let hills;
+  let trend;
+  let closureCount;
+  let maxFraction;
+
+  if (key === 'worst') {
+    trafficLevel = Number(randRange(rng, 0.85, 0.96).toFixed(2));
+    hotspots = randInt(rng, 3) + 6;
+    radius = 0.34;
+    elevationAmplitude = Math.round(randRange(rng, 140, 185));
+    hills = 7;
+    trend = 0.65;
+    closureCount = map ? Math.round(randRange(rng, 80, 130)) : Math.round(randRange(rng, 60, 95));
+    maxFraction = 0.35;
+  } else if (key === 'random') {
+    trafficLevel = Number(randRange(rng, 0.12, 0.92).toFixed(2));
+    hotspots = randInt(rng, 7) + 2;
+    radius = Number(randRange(rng, 0.16, 0.35).toFixed(2));
+    elevationAmplitude = Math.round(randRange(rng, 15, 175));
+    hills = randInt(rng, 6) + 2;
+    trend = Number(randRange(rng, 0.1, 0.7).toFixed(2));
+    closureCount = map ? Math.round(randRange(rng, 5, 115)) : Math.round(randRange(rng, 5, 80));
+    maxFraction = 0.30;
+  } else {
+    trafficLevel = Number(randRange(rng, 0.25, 0.38).toFixed(2));
+    hotspots = randInt(rng, 2) + 3;
+    radius = 0.22;
+    elevationAmplitude = Math.round(randRange(rng, 25, 50));
+    hills = 4;
+    trend = 0.25;
+    closureCount = map ? Math.round(randRange(rng, 8, 18)) : Math.round(randRange(rng, 6, 14));
+    maxFraction = 0.20;
+  }
+
+  const description =
+    `${meta.label} · ${Math.round(trafficLevel * 100)} % congestion · ±${elevationAmplitude} m terrain · ` +
+    `${closureCount} closed roads · seed ${seed}`;
+
+  if (map) {
+    return {
+      id: meta.id,
+      name: `${meta.label} (${map.name || 'city map'})`,
+      scenarioType: key,
+      description,
+      seed,
+      repeat,
+      cityMap: map,
+      elevation: { amplitude: elevationAmplitude, hills, trend },
+      traffic: { level: trafficLevel, hotspots, radius },
+      closures: { count: closureCount, maxFraction },
+    };
+  }
+
+  const netType = options.networkType === 'random' ? 'random' : 'grid';
+  const targetNodes = Number.isFinite(Number(options.targetNodes)) && Number(options.targetNodes) >= 100
+    ? Math.min(20000, Math.round(Number(options.targetNodes)))
+    : BASE_NETWORK.targetNodes;
+
+  return {
+    id: meta.id,
+    name: `${meta.label} (generated network)`,
+    scenarioType: key,
+    description,
+    seed,
+    repeat,
+    network: {
+      ...BASE_NETWORK,
+      type: netType,
+      targetNodes,
+    },
+    elevation: { amplitude: elevationAmplitude, hills, trend },
+    traffic: { level: trafficLevel, hotspots, radius },
+    closures: { count: closureCount, maxFraction },
   };
 }

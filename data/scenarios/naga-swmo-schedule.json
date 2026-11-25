@@ -4,10 +4,11 @@
   "seed": 20261118,
   "map": {
     "type": "geojson",
-    "path": "data/Naga_City_roads.geojson"
+    "path": "data/Naga_City_boundary_roads.geojson"
   },
   "test_areas": {
     "schedule": "data/collection_schedules.csv",
+    "schedule_areas": "data/naga_schedule_areas.geojson",
     "boundaries": "data/naga_areas.geojson"
   },
   "depot": {
@@ -26,7 +27,7 @@
     "unload_time_s": 300,
     "dt_s": 1,
     "max_time_s": 43200,
-    "bin_capacity_kg": 120,
+    "bin_capacity_kg": 168,
     "fill_thresholds": {
       "medium": 40,
       "high": 75

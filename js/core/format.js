@@ -21,10 +21,9 @@ export function fmtMeters(x) {
 
 export function fmtSeconds(x) {
   if (!Number.isFinite(x)) return DASH;
-  if (x < 60) return `${x.toFixed(1)} s`;
-  const m = Math.floor(x / 60);
-  const s = Math.round(x - m * 60);
-  return `${m}m ${s}s`;
+  if (x < 59.95) return `${x.toFixed(1)} s`;
+  const total = Math.round(x);
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
 }
 
 /** Signed percentage, e.g. "+12.4%". */

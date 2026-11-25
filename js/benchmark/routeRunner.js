@@ -149,7 +149,11 @@ export async function runRouteBenchmark({
   const optionsFor = (alg) => options[alg.id] || {};
   const fingerprintBefore = graphFingerprint(graph);
 
-  const round = buildCollectionRound(testCase, { stopCount, allowed: testCase.allowed });
+  const round = buildCollectionRound(testCase, {
+    stopCount,
+    seed: testCase.scenario?.seed ?? 909,
+    allowed: testCase.allowed,
+  });
   const legCount = round.legs.length;
 
   // ---- 1. preprocessing — once for the whole round -------------------------
@@ -241,12 +245,14 @@ export async function runRouteBenchmark({
 
       found: anyFound,
       allRunsFound: allFound,
-      valid: repTotals.valid,
+      valid: roundTotals.every((t) => t.valid),
       validPath: repTotals.valid,
       reason: failingLeg >= 0 ? `leg ${failingLeg + 1}: ${repEvals[failingLeg].reason}` : '',
 
       // The whole round as one polyline, for the canvas and the playback.
-      path: concatLegPaths(representative.legs.map((leg) => (leg ? leg.path : null))),
+      path: repEvals.every((e) => Number.isFinite(e.distance))
+        ? concatLegPaths(representative.legs.map((leg) => (leg ? leg.path : null)))
+        : null,
       exploredNodes: concatLegPaths(representative.legs.map((leg) => (leg ? leg.exploredNodes : null))),
       stops: round.stops,
       depot: round.depot,
@@ -323,7 +329,10 @@ function sumLegEvals(evals) {
   let travelTime = 0;
   let valid = true;
   for (const e of evals) {
-    if (!e.valid) { valid = false; continue; }
+    if (!Number.isFinite(e.distance) || !Number.isFinite(e.cost) || !Number.isFinite(e.time)) {
+      return { distance: NaN, cost: NaN, travelTime: NaN, valid: false };
+    }
+    if (!e.valid) valid = false;
     distance += e.distance;
     cost += e.cost;
     travelTime += e.time;

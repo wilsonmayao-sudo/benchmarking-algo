@@ -36,7 +36,7 @@ export const DEFAULT_SETTINGS = {
   unload_time_s: 300,          // time spent unloading at the disposal site
   dt_s: 1,                     // simulation tick
   max_time_s: 6 * 3600,        // hard stop
-  bin_capacity_kg: 120,        // load of a 100 %-full bin when a bin gives no capacity
+  bin_capacity_kg: 168,        // load of a 100 %-full bin when a bin gives no capacity
   fill_thresholds: { medium: 40, high: 75 }, // % — green < medium ≤ yellow < high ≤ red
   visit_order: 'nearest',      // 'nearest' (greedy re-ordering) | 'given' (config order)
   return_to_depot: true,       // trucks drive back to the depot when their work is done
@@ -170,6 +170,9 @@ export async function loadScenario(config, io = {}) {
 
 function describeVariant(o) {
   const parts = [];
+  if (o.scenarioType && FLEET_SCENARIO_TYPES[o.scenarioType]) {
+    parts.push(FLEET_SCENARIO_TYPES[o.scenarioType].label);
+  }
   if (o.noEvents) parts.push('no events');
   else if (o.noRandomEvents) parts.push('scheduled events only');
   if (Number.isInteger(o.truckCount)) parts.push(`${o.truckCount} truck${o.truckCount === 1 ? "" : "s"}`);
@@ -180,6 +183,112 @@ function describeVariant(o) {
   if (o.seed !== undefined) parts.push(`seed ${o.seed}`);
   if (o.binDay !== undefined) parts.push(o.binDay === 'all' ? 'all schedule days' : `${o.binDay} schedule`);
   return parts.length ? parts.join(', ') : 'as configured';
+}
+
+/**
+ * Schedule-independent fleet scenario presets.
+ * Applying normal / worst / random removes CSV schedule imports and truck area filters,
+ * generating bins and road events deterministically from the given seed.
+ */
+export const FLEET_SCENARIO_TYPES = {
+  normal: {
+    label: 'Normal Case',
+    description: 'Moderate bin fill (25–70 %), 5 moderate traffic/closure events, schedule-independent.',
+  },
+  worst: {
+    label: 'Worst Case',
+    description: 'High bin density and fill (75–100 %), 20 severe delays and road closures.',
+  },
+  random: {
+    label: 'Randomized Case',
+    description: 'Seeded random bin count, fill levels, and road incidents independent of schedule.',
+  },
+};
+
+export function applyScenarioType(baseConfig, type, seed) {
+  if (!baseConfig || typeof baseConfig !== 'object') return baseConfig;
+  const copy = typeof structuredClone === 'function'
+    ? structuredClone(baseConfig)
+    : JSON.parse(JSON.stringify(baseConfig));
+
+  const parsedSeed = Number(seed);
+  const effectiveSeed = Number.isFinite(parsedSeed) && parsedSeed >= 1
+    ? Math.min(99999999, Math.round(parsedSeed))
+    : (Number(copy.seed) >= 1 ? Math.round(Number(copy.seed)) : 20260913);
+
+  if (!type || type === 'configured' || !Object.prototype.hasOwnProperty.call(FLEET_SCENARIO_TYPES, type)) {
+    if (Number.isFinite(parsedSeed) && parsedSeed >= 1) copy.seed = effectiveSeed;
+    return copy;
+  }
+
+  const rng = mulberry32(effectiveSeed >>> 0);
+  const explicitNodeCount = copy.map?.type === 'explicit' && Array.isArray(copy.map.nodes)
+    ? copy.map.nodes.length
+    : 0;
+  const maxExplicitBins = explicitNodeCount > 4 ? Math.max(4, Math.floor(explicitNodeCount * 0.7)) : Infinity;
+
+  let binCount;
+  let fill;
+  let randomEventCount;
+  let closureShare;
+  let delayFactor;
+
+  if (type === 'worst') {
+    binCount = Math.min(maxExplicitBins, Math.round(randRange(rng, 105, 130)));
+    fill = [75, 100];
+    randomEventCount = Math.round(randRange(rng, 18, 26));
+    closureShare = 0.55;
+    delayFactor = [2.2, 4.0];
+  } else if (type === 'random') {
+    binCount = Math.min(maxExplicitBins, Math.round(randRange(rng, 25, 115)));
+    const fMin = Math.round(randRange(rng, 10, 45));
+    const fMax = Math.round(randRange(rng, Math.max(fMin + 15, 55), 100));
+    fill = [fMin, fMax];
+    randomEventCount = Math.round(randRange(rng, 2, 20));
+    closureShare = Number(randRange(rng, 0.2, 0.5).toFixed(2));
+    const dMin = Number(randRange(rng, 1.3, 2.0).toFixed(2));
+    const dMax = Number(randRange(rng, dMin + 0.5, 3.8).toFixed(2));
+    delayFactor = [dMin, dMax];
+  } else {
+    binCount = Math.min(maxExplicitBins, Math.round(randRange(rng, 50, 70)));
+    fill = [25, 70];
+    randomEventCount = Math.round(randRange(rng, 4, 7));
+    closureShare = 0.25;
+    delayFactor = [1.4, 2.2];
+  }
+
+  copy.seed = effectiveSeed;
+  copy.bins = {
+    random: {
+      count: binCount,
+      seed: (effectiveSeed + 101) >>> 0,
+      fill,
+    },
+  };
+
+  if (Array.isArray(copy.trucks)) {
+    copy.trucks = copy.trucks.map(({ areas, ...rest }) => ({
+      ...rest,
+      current_load: 0,
+    }));
+  }
+
+  const trafficShare = Number((1 - closureShare).toFixed(2));
+  copy.events = {
+    scheduled: [],
+    random: {
+      enabled: true,
+      count: randomEventCount,
+      seed: (effectiveSeed + 202) >>> 0,
+      window_s: [0, 3600],
+      types: { TRAFFIC_DELAY: trafficShare, ROAD_CLOSURE: closureShare },
+      delay_factor: delayFactor,
+      delay_duration_s: [300, 1200],
+      closure_duration_s: [300, 1200],
+    },
+  };
+
+  return copy;
 }
 
 // ===========================================================================

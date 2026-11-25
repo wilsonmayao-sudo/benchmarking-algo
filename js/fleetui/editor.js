@@ -18,10 +18,10 @@ const EDIT_KEY = 'ecoloop.fleet.edits:';
 const TYPES = ['General', 'Recyclable', 'Organic'];
 const ROUTE_COLORS = ['#2563eb', '#db2777', '#7c3aed', '#ea580c', '#0d9488', '#ca8a04'];
 const STATUS = {
-  'On the way': { icon: '🚚', cls: 'way' },
-  Collecting: { icon: '🗑️', cls: 'collect' },
-  Delayed: { icon: '⚠️', cls: 'late' },
-  Finished: { icon: '✅', cls: 'done' },
+  'On the way': { icon: '', cls: 'way' },
+  Collecting: { icon: '', cls: 'collect' },
+  Delayed: { icon: '', cls: 'late' },
+  Finished: { icon: '', cls: 'done' },
 };
 
 function readStore(key, fallback) {
@@ -59,9 +59,12 @@ export class FleetEditor {
     this.redrawId = null;   // route being redrawn
     this.lastHtml = '';
 
-    const stored = Number(readStore(LIMIT_KEY, 10));
-    this.limit = Number.isInteger(stored) && stored >= 1 && stored <= 10 ? stored : 10;
-    $('binLimit').value = String(this.limit);
+    const rawLimit = readStore(LIMIT_KEY, 'all');
+    const parsedLimit = rawLimit === 'all' ? Infinity : Number(rawLimit);
+    this.limit = parsedLimit === Infinity || (Number.isInteger(parsedLimit) && parsedLimit >= 1 && parsedLimit <= 100)
+      ? parsedLimit
+      : Infinity;
+    $('binLimit').value = this.limit === Infinity ? 'all' : String(this.limit);
     clearOldRoutes();
     $('optTruckDelays').checked = readStore(DELAY_KEY, true) !== false;
     map.getVisibleBins = () => (map.sim ? map.sim.bins : []);
@@ -166,7 +169,7 @@ export class FleetEditor {
     this.map.setEditMode(mode);
     this.host.onMode?.(mode);
     $('btnAddBin').setAttribute('aria-pressed', String(mode === 'addBin'));
-    $('btnAddBin').textContent = mode === 'addBin' ? '✓ Click the map (Esc to stop)' : '＋ Add Bin';
+    $('btnAddBin').textContent = mode === 'addBin' ? 'Click map (Esc to stop)' : 'Add bin';
     $('btnCreateRoute').setAttribute('aria-pressed', String(mode === 'draw'));
     $('drawTools').hidden = mode !== 'draw' && mode !== 'drawZone';
     if (mode !== 'draw') this.redrawId = null;
@@ -224,7 +227,7 @@ export class FleetEditor {
   _bind() {
     const { map } = this;
     $('binLimit').addEventListener('change', (e) => {
-      this.limit = Number(e.target.value);
+      this.limit = e.target.value === 'all' ? Infinity : Number(e.target.value);
       writeStore(LIMIT_KEY, e.target.value);
       if (this.sim) this.host.rebuild().then(() => this.say(`Now using ${this.sim.bins.length} bins. The run starts again.`, 'ok'));
     });
@@ -432,11 +435,11 @@ export class FleetEditor {
     const s = STATUS[d.status];
     const pct = d.total ? Math.round((d.done / d.total) * 100) : 0;
     return `
-      <div class="d-status ${s.cls}"><span aria-hidden="true">${s.icon}</span> ${d.status}</div>
+      <div class="d-status ${s.cls}">${d.status}</div>
       <div class="d-row"><div class="d-label">Next stop</div><div class="d-big">${esc(d.next).replace(/ (AM|PM)/g, '&nbsp;$1')}</div></div>
       <div class="d-row"><div class="d-label">Progress</div><div class="d-big">${d.done} of ${d.total} bins collected</div>
         <div class="d-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Bins collected"><div style="width:${pct}%"></div></div>${this._steps(d.step)}</div>
-      ${d.delay ? `<div class="d-row d-delay"><span aria-hidden="true">⏱</span> ${esc(d.delay)}</div>` : ''}
+      ${d.delay ? `<div class="d-row d-delay">${esc(d.delay)}</div>` : ''}
       <div class="d-row"><div class="d-label">Times</div><div class="d-mid">${d.startedAt === null ? 'Not started'
     : `Started ${fmtTime(d.startedAt)} · ${d.finished ? 'Finished' : 'Expected finish'} ${fmtTime(d.endAt)}`}</div></div>
       <div class="d-row"><div class="d-label">Events</div><ul class="d-events" tabindex="0" aria-label="Events, newest first">${d.events.length
@@ -474,6 +477,7 @@ export class FleetEditor {
 
   _renderBinForm(p) {
     const bin = p.id ? this.sim.binsById.get(p.id) : null;
+    if (p.id && !bin) { this.closePanel(); return; }
     const v = bin || p;
     const route = bin ? this.sim.routes.get(bin.routeId) : routeAt(this.sim, p.x, p.y);
     $('sideTitle').textContent = bin ? bin.name : 'New bin';
@@ -499,7 +503,7 @@ export class FleetEditor {
     $('sideBody').innerHTML = `<div class="pick-list tall">${bins.map((b, i) => {
       const r = this.sim.routes.get(b.routeId);
       return `<button type="button" class="spot-row" data-bin="${esc(b.id)}"><span class="pick-no">${r ? numberOf(r, b.id) : i + 1}</span>
-        <span class="pick-name">${esc(b.name)}</span><span class="pick-fill">${b.state === 'collected' ? '✓ done' : `${Math.round(b.fill)}%`}</span></button>`;
+        <span class="pick-name">${esc(b.name)}</span><span class="pick-fill">${b.state === 'collected' ? 'Done' : `${Math.round(b.fill)}%`}</span></button>`;
     }).join('')}</div>`;
     this._foot([]);
   }
@@ -531,7 +535,7 @@ export class FleetEditor {
         <p class="hint">Tick bins here, or click them on the map.</p>
         <div class="pick-list">${p.bins.map((b) => `<label class="pick-row"><input type="checkbox" name="bin" value="${esc(b.id)}" />
           <span class="pick-no"></span><span class="pick-name">${esc(b.name)}</span>
-          <span class="pick-fill">${b.state === 'collected' ? '✓ done' : `${Math.round(b.fill)}%`}</span></label>`).join('')}</div>
+          <span class="pick-fill">${b.state === 'collected' ? 'Done' : `${Math.round(b.fill)}%`}</span></label>`).join('')}</div>
         <label class="pick-order">Visit them in
           <select name="order"><option value="nearest">the shortest way</option><option value="own" ${p.ownOrder ? 'selected' : ''}>the order I select: 1, 2, 3 …</option></select></label>
       </fieldset>` : '<p class="hint">No shown bins inside this area. Bins you add inside it will join this route.</p>'}
