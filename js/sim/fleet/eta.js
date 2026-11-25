@@ -22,13 +22,35 @@
 
 import { busyRemaining, remainingRouteTime } from './truck.js';
 import { entryNode, routeOrder, routerFor, stopTime } from './routes.js';
+import { sequenceStops } from './sequencer.js';
 
 /**
  * Order in which a truck will visit its queue, starting from node `from`.
- * Must match Simulation.pickNextBin() so the projection is what the truck really does.
+ * Supports:
+ *   - 'given': preserve assigned order
+ *   - 'nearest': legacy Euclidean Nearest Neighbor
+ *   - 'road_nn': road-cost Nearest Neighbor via Router/RoadState
+ *   - 'road2opt': Fixed-Endpoint Asymmetric Road-Cost 2-Opt (`R01`)
  */
-export function plannedOrder(graph, queue, binsById, from, visitOrder) {
+export function plannedOrder(graph, queue, binsById, from, visitOrder, ctx = null) {
   if (visitOrder === 'given') return queue.slice();
+  if ((visitOrder === 'road_nn' || visitOrder === 'road2opt') && ctx && ctx.road) {
+    const cacheKey = `${visitOrder}#${from}#${ctx.endNode ?? -1}#${ctx.road.version}#${queue.join(',')}`;
+    if (!ctx._orderCache) ctx._orderCache = new Map();
+    if (ctx._orderCache.has(cacheKey)) return ctx._orderCache.get(cacheKey).slice();
+
+    const seq = sequenceStops(graph, ctx.road, ctx.router || null, {
+      startNode: from,
+      stopIds: queue,
+      binsById,
+      endNode: ctx.endNode ?? -1,
+      method: visitOrder,
+    });
+    if (typeof ctx.onSeqTiming === 'function') ctx.onSeqTiming(seq.ms);
+    ctx._orderCache.set(cacheKey, seq.order);
+    return seq.order.slice();
+  }
+
   const left = queue.slice();
   const order = [];
   let cur = from;
@@ -45,6 +67,23 @@ export function plannedOrder(graph, queue, binsById, from, visitOrder) {
     cur = binsById.get(id).node;
   }
   return order;
+}
+
+/** Drive seconds between two nodes for ETA look-ahead under either 'distance' or 'time' cost mode. */
+function legSeconds(graph, road, router, from, to, truckSpeed, purpose = 'eta') {
+  if (from === to) return 0;
+  if (road.costMode === 'time') {
+    const hasElev = Boolean(graph.elevation) && (road.climbWeight > 0 || road.descentWeight > 0);
+    if (!hasElev) return router.legCost(from, to, purpose);
+    const res = router.findPath(from, to, purpose);
+    if (!res.found) return Infinity;
+    let sec = 0;
+    for (let i = 0; i < res.arcs.length; i++) {
+      sec += road.arcTime(res.arcs[i], truckSpeed);
+    }
+    return sec;
+  }
+  return router.legCost(from, to, purpose) / truckSpeed;
 }
 
 /**
@@ -64,6 +103,15 @@ export function computeEta(sim, truck) {
   if (truck.status === 'idle' || !truck.target) {
     return { nextAt: now, endAt: now, label: 'idle at depot', targetName: '', computedAt: now };
   }
+  if (truck.status === 'awaiting_unload_confirm') {
+    return {
+      nextAt: now,
+      endAt: now + s.unload_time_s,
+      label: `${truck.name} · awaiting unload confirmation`,
+      targetName: 'Landfill',
+      computedAt: now,
+    };
+  }
 
   // ---- current leg ----
   let t = now + busyRemaining(truck, now);
@@ -80,13 +128,13 @@ export function computeEta(sim, truck) {
   let end = nextAt;
   let load = truck.load;
   let at = target.node;
-  const legTime = (from, to) => (from === to ? 0 : router.legCost(from, to, 'eta') / truck.speed);
+  const legTime = (from, to) => legSeconds(graph, road, router, from, to, truck.speed, 'eta');
 
   if (truck.routeId) {
     // Route truck (trip: see routes.js): → area, about 2 min per stop on roads inside it, landfill
     // when full and at the end, then back to the depot.
     const route = sim.routes.get(truck.routeId);
-    const legBy = (r, from, to) => (from === to ? 0 : r.legCost(from, to, 'eta') / truck.speed);
+    const legBy = (r, from, to) => legSeconds(graph, road, r, from, to, truck.speed, 'eta');
     const drive = (to) => { // on any road; a leg that is closed right now is left out
       const leg = legBy(sim.router, at, to);
       if (leg === Infinity) return false;
@@ -145,9 +193,10 @@ export function computeEta(sim, truck) {
     if (truck.status !== 'servicing') end += bin.serviceTime;
     load += bin.load;
     const rest = truck.queue.filter((id) => id !== target.binId);
-    for (const id of plannedOrder(graph, rest, binsById, at, s.visit_order)) {
+    const seqCtx = { road, router, endNode: world.disposal, _orderCache: sim._orderCache };
+    for (const id of plannedOrder(graph, rest, binsById, at, s.visit_order, seqCtx)) {
       const b = binsById.get(id);
-      if (load + b.load > truck.maxCapacity) break; // will be handed off at this point
+      if (!s.operational_mode && load + b.load > truck.maxCapacity) break; // will be handed off at this point
       end += legTime(at, b.node) + b.serviceTime;
       load += b.load;
       at = b.node;
@@ -157,8 +206,8 @@ export function computeEta(sim, truck) {
     load = 0;
   }
 
-  // final trip: unload if carrying anything, then back to the depot
-  if (target.kind !== 'disposal' && load > 0) {
+  // final trip: unload if carrying anything (or if manual capacity reported > 0), then back to the depot
+  if (target.kind !== 'disposal' && (load > 0 || truck.reportedCapacityPct > 0)) {
     end += legTime(at, world.disposal) + s.unload_time_s;
     at = world.disposal;
   }

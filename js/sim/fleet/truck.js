@@ -49,6 +49,19 @@ export function createTruckState(cfg) {
     trip: null,               // { startedAt, plannedEnd, lastEnd, collected, finishedAt, reason }
     timeline: [],             // [{ time, seq, text }] plain-language events
     pendingEtaCheck: null,    // {binId, predictedAt} — measures ETA accuracy
+    // --- operational simulation fields (R05, R06, R07) ---
+    reportedCapacityPct: 0,   // manual driver capacity report: 0 | 25 | 50 | 75 | 100
+    awaitingUnloadConfirm: false,
+    collectionDistanceM: 0,
+    disposalDistanceM: 0,
+    returnDistanceM: 0,
+    drivingTimeS: 0,
+    traversedArcs: [],
+    deviationReroutes: 0,
+    gpsNoiseSuppressed: 0,
+    lastDeviationRerouteAt: -Infinity,
+    consecutiveOffRoute: 0,
+    offlineFallbackReroutes: 0,
   };
 }
 
@@ -74,11 +87,29 @@ export function routeUsesEdge(graph, truck, edge) {
 
 /** Seconds left on the current route under the live road state (Infinity if it is now blocked). */
 export function remainingRouteTime(graph, road, truck) {
+  if (road.costMode === 'time') {
+    let sec = 0;
+    for (let i = 0; i < truck.arcs.length; i++) {
+      const a = truck.arcs[i];
+      const e = graph.adjEdge[a];
+      if (i === 0 && truck.arcPos > 0) {
+        const v = road.effectiveSpeed(e);
+        if (!(v > 0)) return Infinity;
+        sec += (graph.edgeLength[e] - truck.arcPos) / v;
+      } else {
+        const t = road.arcTime(a, truck.speed);
+        if (t === Infinity) return Infinity;
+        sec += t;
+      }
+    }
+    return sec;
+  }
+
   let weight = 0;
   for (let i = 0; i < truck.arcs.length; i++) {
     const a = truck.arcs[i];
     const e = graph.adjEdge[a];
-    const mult = road.multiplier[e];
+    const mult = road.offline ? 1 : road.multiplier[e];
     if (i === 0 && truck.arcPos > 0) {
       // already on this road — finishing it is always allowed
       weight += (graph.edgeLength[e] - truck.arcPos) * mult;

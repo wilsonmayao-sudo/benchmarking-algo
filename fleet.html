@@ -74,6 +74,15 @@
           <select id="optTrucks"></select>
         </label>
       </div>
+      <label class="field field-inline-top">
+        <span>Routing</span>
+        <select id="optRoutingMode">
+          <option value="legacy" selected>Dynamic A* + Euclidean NN (Baseline 2)</option>
+          <option value="static_given">Distance A* + Schedule Order (Baseline 1)</option>
+          <option value="proposed_alt">Traffic+Elev ALT-A* + Road 2-Opt (Proposed)</option>
+          <option value="proposed_w105">Weighted ALT-A* (w=1.05) + Road 2-Opt (R09)</option>
+        </select>
+      </label>
       <label class="field field-inline-top" id="optDayWrap" hidden>
         <span>Schedule day</span>
         <select id="optDay">
@@ -137,6 +146,30 @@
       <div class="disclosure-body">
         <div id="routeList" class="truck-list"></div>
         <label class="check check-wrap"><input type="checkbox" id="optTruckDelays" checked /> Random route delays</label>
+      </div>
+    </details>
+
+    <details class="panel-disclosure">
+      <summary>Operational simulation</summary>
+      <div class="disclosure-body">
+        <label class="field">
+          <span>Truck</span>
+          <select id="optOpTruck"></select>
+        </label>
+        <div class="btn-row field-top-gap">
+          <button id="btnCap25" class="small" type="button">25%</button>
+          <button id="btnCap50" class="small" type="button">50%</button>
+          <button id="btnCap75" class="small" type="button">75%</button>
+          <button id="btnCap100" class="small" type="button">100%</button>
+        </div>
+        <div class="btn-row field-top-gap">
+          <button id="btnConfirmUnload" class="small" type="button">Confirm unload</button>
+          <button id="btnSimDeviation" class="small" type="button">GPS deviation</button>
+        </div>
+        <div class="btn-row field-top-gap">
+          <button id="btnToggleOffline" class="small" type="button">Go offline</button>
+        </div>
+        <p class="hint" id="opSimInfo"></p>
       </div>
     </details>
 

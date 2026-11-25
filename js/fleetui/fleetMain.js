@@ -113,6 +113,29 @@ async function rebuild() {
   $('optSeed').value = String(seedVal);
 
   const cfg = applyScenarioType(baseCfg, scenarioType, seedVal);
+  const routingMode = $('optRoutingMode').value;
+  cfg.settings = cfg.settings || {};
+  if (routingMode === 'static_given') {
+    cfg.settings.heuristic = 'euclidean';
+    cfg.settings.cost_mode = 'distance';
+    cfg.settings.routing_engine = 'legacy';
+    cfg.settings.visit_order = 'given';
+    cfg.settings.weight_factor = 1.0;
+  } else if (routingMode === 'proposed_alt') {
+    cfg.settings.heuristic = 'alt';
+    cfg.settings.cost_mode = 'time';
+    cfg.settings.routing_engine = 'fast';
+    cfg.settings.visit_order = 'road2opt';
+    cfg.settings.weight_factor = 1.0;
+    cfg.settings.cache_paths = true;
+  } else if (routingMode === 'proposed_w105') {
+    cfg.settings.heuristic = 'alt';
+    cfg.settings.cost_mode = 'time';
+    cfg.settings.routing_engine = 'fast';
+    cfg.settings.visit_order = 'road2opt';
+    cfg.settings.weight_factor = 1.05;
+    cfg.settings.cache_paths = true;
+  }
   state.effectiveConfig = cfg;
 
   const fromSchedule = Boolean(cfg.bins?.csv);
@@ -237,11 +260,29 @@ function refreshPanels(full = false) {
   areas.refresh();
   renderTruckList($('truckList'), sim, map.focus);
   renderLog($('logList'), sim.logEntries, $('logFilter').value, areas.logFilter());
-  renderMetrics($('metricsTable'), sim.summary(), state.playing);
+  renderMetrics($('metricsTable'), sim.summary(), state.playing, sim);
   renderTruckTable($('truckTable'), sim);
   editor.refresh();
   renderEventTable($('eventTable'), sim);
+  syncOpControls(sim);
   if (full) renderRunsTable($('runsCompareTable'), state.runs);
+}
+
+function syncOpControls(sim) {
+  const sel = $('optOpTruck');
+  if (sel && sel.options.length !== sim.trucks.length) {
+    sel.innerHTML = sim.trucks.map((t) => `<option value="${t.id}">${t.name}</option>`).join('');
+  }
+  if ($('btnToggleOffline')) {
+    $('btnToggleOffline').textContent = sim.road.offline ? 'Reconnect' : 'Go offline';
+  }
+  const tid = sel?.value;
+  const truck = sim.trucks.find((t) => t.id === tid) || sim.trucks[0];
+  if ($('opSimInfo') && truck) {
+    $('opSimInfo').textContent = `${truck.name}: ${truck.reportedCapacityPct}% reported · status=${truck.status}` +
+      `${sim.road.offline ? ' · Offline (no live traffic)' : ''}` +
+      `${sim.offlineSyncQueue.length ? ` · ${sim.offlineSyncQueue.length} queued` : ''}`;
+  }
 }
 
 function onFinished() {
@@ -310,9 +351,56 @@ $('btnRunToEnd').addEventListener('click', () => {
   onFinished();
 });
 $('optSpeed').addEventListener('change', (e) => { state.speed = Number(e.target.value); });
-for (const id of ['optDay', 'optEvents', 'optRandom', 'optTrucks', 'optRandomCount']) {
+for (const id of ['optDay', 'optEvents', 'optRandom', 'optTrucks', 'optRandomCount', 'optRoutingMode']) {
   $(id).addEventListener('change', () => state.config && rebuild().catch(fail));
 }
+
+function activeOpTruck() {
+  const sim = state.sim;
+  if (!sim || sim.finished) return null;
+  const id = $('optOpTruck')?.value;
+  return sim.trucks.find((t) => t.id === id) || sim.trucks[0] || null;
+}
+
+for (const [id, pct] of [['btnCap25', 25], ['btnCap50', 50], ['btnCap75', 75], ['btnCap100', 100]]) {
+  $(id).addEventListener('click', () => {
+    const t = activeOpTruck();
+    if (!t) return;
+    state.sim.world.settings.operational_mode = true;
+    state.sim.injectOperationalEvent({ type: 'MANUAL_CAPACITY_REPORT', truckId: t.id, percent: pct });
+    map.render();
+    refreshPanels();
+  });
+}
+
+$('btnConfirmUnload').addEventListener('click', () => {
+  const t = activeOpTruck();
+  if (!t) return;
+  state.sim.injectOperationalEvent({ type: 'UNLOAD_CONFIRMED', truckId: t.id });
+  map.render();
+  refreshPanels();
+});
+
+$('btnSimDeviation').addEventListener('click', () => {
+  const t = activeOpTruck();
+  if (!t) return;
+  state.sim.injectOperationalEvent({
+    type: 'GPS_DEVIATION',
+    truckId: t.id,
+    gpsAccuracyM: 12,
+    offsetM: 85,
+    consecutiveReadings: 3,
+  });
+  map.render();
+  refreshPanels();
+});
+
+$('btnToggleOffline').addEventListener('click', () => {
+  if (!state.sim || state.sim.finished) return;
+  state.sim.injectOperationalEvent({ type: state.sim.road.offline ? 'NETWORK_RECONNECT' : 'NETWORK_DISCONNECT' });
+  map.render();
+  refreshPanels();
+});
 for (const id of ['optScenarioType', 'optSeed']) {
   $(id).addEventListener('change', () => {
     if (!state.config) return;

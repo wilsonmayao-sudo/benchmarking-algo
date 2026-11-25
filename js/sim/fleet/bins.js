@@ -31,6 +31,9 @@ export function createBinState(cfg) {
     collectedBy: null,
     collectedAt: null,
     fillAtPickup: null,
+    visited: false,
+    confirmed: false,
+    skipped: false,
   };
 }
 

@@ -5,7 +5,7 @@
 
 import { etaLines, ICON_PATHS } from './mapView.js';
 import { BIN_STATUS_COLORS } from '../sim/fleet/bins.js';
-import { truckRows } from '../sim/metrics.js';
+import { truckRows, timingSummary } from '../sim/metrics.js';
 import { fmtDuration, fmtClock } from '../sim/fleet/eta.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -43,7 +43,7 @@ export function renderLog(el, entries, filter, inArea = null) {
   if (atBottom) el.scrollTop = el.scrollHeight;
 }
 
-export function renderMetrics(table, s, playing = false) {
+export function renderMetrics(table, s, playing = false, sim = null) {
   const status = s.finished
     ? `finished — ${s.finishReason}`
     : playing
@@ -51,21 +51,25 @@ export function renderMetrics(table, s, playing = false) {
       : s.makespanS > 0
         ? 'paused'
         : 'ready';
+  const tm = sim ? timingSummary(sim) : null;
   const rows = [
     [s.finished ? 'Bins collected / missed' : 'Bins collected / remaining', `${s.binsCollected} / ${s.binsMissed}`],
-    ['Total distance', `${(s.totalDistanceM / 1000).toFixed(2)} km`],
+    ['Coverage (planned / confirmed)', `${s.plannedCoveragePct}% / ${s.confirmedCoveragePct}%`],
+    ['Total distance (coll / disp / ret)', `${(s.totalDistanceM / 1000).toFixed(2)} km (${(s.collectionDistanceM / 1000).toFixed(2)} / ${(s.disposalDistanceM / 1000).toFixed(2)} / ${(s.returnDistanceM / 1000).toFixed(2)})`],
+    ['Repeated road / Backtracking', `${(s.repeatedRoadRatio * 100).toFixed(1)}% (${(s.repeatedRoadDistanceM / 1000).toFixed(2)} km) / ${(s.backtrackingDistanceM || 0).toFixed(0)} m`],
     ['Total time (makespan)', fmtDuration(s.makespanS)],
     ['Sum of truck working time', fmtDuration(s.totalTruckTimeS)],
     ['A* calls', s.astarCalls],
     ['  route / reroute / ETA / assign', `${s.astarRouteCalls} / ${s.astarRerouteCalls} / ${s.astarEtaCalls} / ${s.astarAssignCalls}`],
     ['Avg A* time', `${s.astarAvgMs.toFixed(4)} ms`],
+    ...(tm && tm.altPrepMs > 0 ? [['ALT prep / sequencing / memory', `${tm.altPrepMs.toFixed(1)} ms / ${tm.sequencingTotalMs.toFixed(1)} ms / ${(s.memoryBytes / 1024).toFixed(0)} KB`]] : []),
     ['Nodes expanded / search (avg, min–max)', `${s.nodesExpandedAvg} (${s.nodesExpandedMin}–${s.nodesExpandedMax})`],
     ['Leg-cache hits (not A* calls)', s.legCacheHits],
     ['Road events applied', s.eventsApplied],
-    ['Reroutes caused by events', s.reroutes],
+    ['Reroutes (events / GPS dev / offline)', `${s.reroutes} / ${s.deviationReroutes} / ${s.offlineFallbackReroutes}`],
     ['Blocked incidents', s.blockedIncidents],
     ['Bin reassignments', s.reassignments],
-    ['Disposal trips', s.disposalTrips],
+    ['Disposal trips (unload confirms)', `${s.disposalTrips} (${s.unloadConfirmations})`],
     ['ETA mean absolute error', `${s.etaMaeS} s`],
     ['Status', status],
   ];

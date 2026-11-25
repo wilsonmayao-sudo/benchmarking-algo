@@ -16,6 +16,20 @@
  * simulation's job (it knows where every truck is) — that keeps the two concerns apart.
  */
 
+export const OPERATIONAL_EVENT_TYPES = new Set([
+  'MANUAL_CAPACITY_REPORT',
+  'UNLOAD_CONFIRMED',
+  'STOP_CONFIRMED',
+  'STOP_SKIPPED',
+  'GPS_DEVIATION',
+  'NETWORK_DISCONNECT',
+  'NETWORK_RECONNECT',
+]);
+
+export function isOperationalEvent(ev) {
+  return Boolean(ev && OPERATIONAL_EVENT_TYPES.has(ev.type));
+}
+
 export class EventQueue {
   /** @param {Array<object>} events from the loader: {time,type,edge,factor?,duration?,source,note} */
   constructor(events = []) {

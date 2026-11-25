@@ -36,7 +36,7 @@
 
 import { RoadState } from './routing/roadState.js';
 import { Router } from './routing/router.js';
-import { EventQueue, applyRoadEvent } from './events/eventSystem.js';
+import { EventQueue, applyRoadEvent, isOperationalEvent } from './events/eventSystem.js';
 import { createTruckState, rerouteOrigin, lockedArc, routeUsesEdge } from './fleet/truck.js';
 import { createBinState } from './fleet/bins.js';
 import { initialAssignment, handoff, assignPending } from './fleet/dispatcher.js';
@@ -55,9 +55,24 @@ export class Simulation {
   constructor(world) {
     this.world = world;
     this.graph = world.graph;
-    this.road = new RoadState(world.graph);
-    this.router = new Router(world.graph, this.road, { heuristic: world.settings.heuristic });
+    const st = world.settings;
+    this.road = new RoadState(world.graph, {
+      costMode: st.cost_mode || 'distance',
+      climbWeight: st.climb_weight ?? 0.5,
+      descentWeight: st.descent_weight ?? 0.15,
+    });
+    this.router = new Router(world.graph, this.road, {
+      heuristic: st.heuristic,
+      engine: st.routing_engine || (st.heuristic === 'alt' ? 'fast' : 'legacy'),
+      weightFactor: st.weight_factor ?? 1.0,
+      landmarks: st.alt_landmarks ?? 6,
+      altIndex: world.altIndex || null,
+      cachePaths: Boolean(st.cache_paths),
+      allowed: world.allowed || null,
+    });
     this.events = new EventQueue(world.events);
+    this._orderCache = new Map();
+    this.offlineSyncQueue = [];
 
     this.bins = world.bins.map(createBinState);
     for (const b of this.bins) {
@@ -92,6 +107,10 @@ export class Simulation {
       eventsApplied: 0,
       etaRecalcs: 0,
       etaErrors: [],         // |actual − predicted| arrival at a bin, seconds
+      sequencingTotalMs: 0,
+      offlineSyncedEvents: 0,
+      manualCapacityEvents: 0,
+      unloadConfirmations: 0,
       wallMs: 0,
     };
     this.listeners = new Set();
@@ -137,6 +156,7 @@ export class Simulation {
    */
   injectEvent(ev) {
     if (this.finished) return null;
+    if (isOperationalEvent(ev)) return this.injectOperationalEvent(ev);
     if (!Number.isInteger(ev.edge) || ev.edge < 0 || ev.edge >= this.graph.edgeCount) return null;
     if (ev.type === 'TRAFFIC_DELAY' && !(ev.factor > 0)) return null;
     const full = { note: '', source: 'manual', ...ev, time: this.time };
@@ -145,6 +165,17 @@ export class Simulation {
     this.handleEvent(full);
     this.metrics.wallMs += now() - t0;
     return this.eventLog[this.eventLog.length - 1];
+  }
+
+  /** Inject an operational / driver / field event immediately at `this.time`. */
+  injectOperationalEvent(ev) {
+    if (this.finished || !isOperationalEvent(ev)) return null;
+    const full = { note: '', source: 'manual', ...ev, time: this.time };
+    this.world.events.push(full);
+    const t0 = now();
+    const res = this.handleOperationalEvent(full);
+    this.metrics.wallMs += now() - t0;
+    return res;
   }
 
   /**
@@ -188,6 +219,10 @@ export class Simulation {
   // =======================================================================
 
   handleEvent(ev) {
+    if (isOperationalEvent(ev)) {
+      this.handleOperationalEvent(ev);
+      return;
+    }
     const { graph } = this;
     const result = applyRoadEvent(ev, this.road, this.events);
     const edgeName = this.world.edgeLabel(ev.edge);
@@ -330,7 +365,10 @@ export class Simulation {
     if (truck.routeId) { planNextOnRoute(this, truck); return; }
     const s = this.world.settings;
 
-    if (truck.mode === 'full') {
+    if (truck.status === 'awaiting_unload_confirm' || truck.awaitingUnloadConfirm) return;
+
+    if (truck.mode === 'full' || (s.operational_mode && truck.reportedCapacityPct >= 100)) {
+      truck.mode = 'full';
       this.routeTo(truck, { kind: 'disposal', node: this.world.disposal }, 'route');
       return;
     }
@@ -338,11 +376,19 @@ export class Simulation {
     if (truck.queue.length > 0) {
       truck.mode = 'collect';
       const from = rerouteOrigin(this.graph, truck);
-      const order = plannedOrder(this.graph, truck.queue, this.binsById, from, s.visit_order);
+      const seqCtx = {
+        road: this.road,
+        router: this.router,
+        endNode: this.world.disposal,
+        _orderCache: this._orderCache,
+        onSeqTiming: (ms) => { this.metrics.sequencingTotalMs += ms; },
+      };
+      const order = plannedOrder(this.graph, truck.queue, this.binsById, from, s.visit_order, seqCtx);
       const next = this.binsById.get(order[0]);
 
-      // Capacity check: full, or the next bin would overflow → hand off and unload.
-      if (truck.load >= truck.maxCapacity || truck.load + next.load > truck.maxCapacity) {
+      // In legacy mode: capacity overflow triggers cross-truck handoff.
+      // In operational_mode: manual 25/50/75/100% reports trigger disposal without cross-truck handoff.
+      if (!s.operational_mode && (truck.load >= truck.maxCapacity || truck.load + next.load > truck.maxCapacity)) {
         const why = truck.load >= truck.maxCapacity ? 'full' : `full (${Math.round(truck.load)}/${truck.maxCapacity} kg, next bin ${Math.round(next.load)} kg)`;
         truck.mode = 'full';
         const remaining = truck.queue.slice();
@@ -360,12 +406,11 @@ export class Simulation {
       return;
     }
 
-    // Queue empty: unload if needed, then go home, then idle.
-    // (If the truck is already at the disposal site the route is empty and it unloads
-    //  on arrival straight away.)
+    // Queue empty: unload at Sanitary Landfill if carrying load (or non-zero manual capacity),
+    // then return to SWMO Office/Depot to park and end the shift.
     const at = rerouteOrigin(this.graph, truck);
     const midRoad = lockedArc(truck) !== null; // finish that road first, a truck never stops (or jumps) on it
-    if (truck.load > 0) {
+    if (truck.load > 0 || (s.operational_mode && truck.reportedCapacityPct > 0)) {
       truck.mode = 'final';
       this.routeTo(truck, { kind: 'disposal', node: this.world.disposal }, 'route');
     } else if (s.return_to_depot && (at !== this.world.depot || midRoad)) {
@@ -387,11 +432,18 @@ export class Simulation {
   routeToReachableBin(truck, skipId, purpose) {
     const from = rerouteOrigin(this.graph, truck);
     const others = truck.queue.filter((id) => id !== skipId);
+    const seqCtx = {
+      road: this.road,
+      router: this.router,
+      endNode: this.world.disposal,
+      _orderCache: this._orderCache,
+      onSeqTiming: (ms) => { this.metrics.sequencingTotalMs += ms; },
+    };
     const order = truck.routeId ? routeOrder(this, truck, others, from)
-      : plannedOrder(this.graph, others, this.binsById, from, this.world.settings.visit_order);
+      : plannedOrder(this.graph, others, this.binsById, from, this.world.settings.visit_order, seqCtx);
     for (const id of order) {
       const bin = this.binsById.get(id);
-      if (truck.load + bin.load > truck.maxCapacity) continue;
+      if (!this.world.settings.operational_mode && truck.load + bin.load > truck.maxCapacity) continue;
       if (this.routeToBin(truck, id, purpose)) {
         this.log('warning', `${this.binsById.get(skipId).name} is unreachable for ${truck.name} — visiting ${bin.name} first`);
         return true;
@@ -490,24 +542,36 @@ export class Simulation {
         continue;
       }
 
-      // Drive along arcs[0]. Speed along a road = truck speed / delay multiplier, so the
-      // time to cross it equals weight / speed — the same quantity the ETA uses.
+      // Drive along arcs[0] using active costMode (distance-multiplier vs live speed + offline fallback).
       const a = truck.arcs[0];
       const e = graph.adjEdge[a];
       const len = graph.edgeLength[e];
-      const v = truck.speed / road.multiplier[e];
+      const v = road.costMode === 'time'
+        ? road.effectiveSpeed(e)
+        : truck.speed / (road.offline ? 1 : road.multiplier[e]);
       const left = len - truck.arcPos;
       const need = left / v;
+      const kind = truck.target?.kind;
       if (need <= tEnd - clock) {
         clock += need;
         truck.distance += left;
+        truck.drivingTimeS += need;
+        if (kind === 'disposal') truck.disposalDistanceM += left;
+        else if (kind === 'depot' || kind === 'stop') truck.returnDistanceM += left;
+        else truck.collectionDistanceM += left;
+        truck.traversedArcs.push(a);
         truck.node = graph.adjNeighbor[a];
         truck.arcs.shift();
         truck.arcPos = 0;
       } else {
-        const d = (tEnd - clock) * v;
+        const dtStep = tEnd - clock;
+        const d = dtStep * v;
         truck.arcPos += d;
         truck.distance += d;
+        truck.drivingTimeS += dtStep;
+        if (kind === 'disposal') truck.disposalDistanceM += d;
+        else if (kind === 'depot' || kind === 'stop') truck.returnDistanceM += d;
+        else truck.collectionDistanceM += d;
         clock = tEnd;
       }
     }
@@ -565,15 +629,29 @@ export class Simulation {
 
   finishService(truck, clock) {
     const bin = this.binsById.get(truck.target.binId);
-    bin.state = 'collected';
-    bin.collectedBy = truck.id;
-    bin.collectedAt = clock;
-    bin.fillAtPickup = bin.fill;
-    bin.fill = 0;
-    truck.load += bin.load;
-    truck.collected++;
+    const s = this.world.settings;
+    bin.visited = true;
+    if (s.operational_mode && s.manual_stop_confirm) {
+      // Wait for explicit STOP_CONFIRMED / STOP_SKIPPED event while keeping bin visited != confirmed
+      bin.state = 'assigned';
+      if (this.road.offline) {
+        this.offlineSyncQueue.push({ time: clock, type: 'STOP_CONFIRMED', truckId: truck.id, binId: bin.id });
+      }
+    } else {
+      bin.confirmed = true;
+      bin.state = 'collected';
+      bin.collectedBy = truck.id;
+      bin.collectedAt = clock;
+      bin.fillAtPickup = bin.fill;
+      bin.fill = 0;
+      truck.load += bin.load;
+      truck.collected++;
+      if (truck.trip) truck.trip.collected++;
+      if (this.road.offline) {
+        this.offlineSyncQueue.push({ time: clock, type: 'STOP_CONFIRMED', truckId: truck.id, binId: bin.id });
+      }
+    }
     truck.lastStop = bin.node;
-    if (truck.trip) truck.trip.collected++;
     note(this, truck, `Picked up ${bin.name}`);
     truck.serviceProblem = '';
     truck.queue = truck.queue.filter((id) => id !== bin.id);
@@ -587,20 +665,195 @@ export class Simulation {
   }
 
   finishUnloading(truck, clock) {
+    const s = this.world.settings;
+    if (s.operational_mode && s.require_unload_confirm) {
+      truck.status = 'awaiting_unload_confirm';
+      truck.awaitingUnloadConfirm = true;
+      note(this, truck, 'At Sanitary Landfill — awaiting explicit unload confirmation');
+      this.log('info', `${truck.name} arrived at landfill — awaiting unload confirmation`);
+      if (s.auto_confirm_unload_delay_s > 0) {
+        const hasPending = this.events.upcoming().some((e) => e.type === 'UNLOAD_CONFIRMED' && e.truckId === truck.id);
+        if (!hasPending) {
+          this.events.push({
+            time: clock + s.auto_confirm_unload_delay_s,
+            type: 'UNLOAD_CONFIRMED',
+            truckId: truck.id,
+            source: 'auto',
+            note: 'driver unload confirmation',
+          });
+        }
+      }
+      this.refreshEta(truck);
+      return;
+    }
+
     const unloaded = truck.load;
     truck.load = 0;
+    truck.reportedCapacityPct = 0;
+    truck.awaitingUnloadConfirm = false;
     truck.lastStop = -1; // coming back to the same place is a new stop
     truck.disposalTrips++;
+    if (s.operational_mode) this.metrics.unloadConfirmations++;
     truck.mode = 'collect';
     truck.status = 'driving';
     truck.serviceProblem = '';
     this.log('info', `${truck.name} unloaded ${Math.round(unloaded)} kg at the disposal site — capacity free`);
     note(this, truck, 'Unloaded at the landfill');
-    // A truck that frees up takes pending bins.
-    const touched = assignPending(this);
+    // A truck that frees up takes pending bins (when not running strict manual-split operational mode).
+    const touched = s.operational_mode ? [] : assignPending(this);
     this.planNext(truck);
     this.wakeTrucks(touched.filter((id) => id !== truck.id));
     this.refreshEta(truck);
+  }
+
+  /**
+   * Handle operational field events (`R05`, `R06`, `R07`):
+   *   MANUAL_CAPACITY_REPORT, UNLOAD_CONFIRMED, STOP_CONFIRMED, STOP_SKIPPED,
+   *   GPS_DEVIATION, NETWORK_DISCONNECT, NETWORK_RECONNECT
+   */
+  handleOperationalEvent(ev) {
+    const s = this.world.settings;
+    this.metrics.eventsApplied++;
+    const truck = ev.truckId ? this.trucks.find((t) => t.id === ev.truckId) : null;
+
+    switch (ev.type) {
+      case 'MANUAL_CAPACITY_REPORT': {
+        if (!truck) return null;
+        const pct = Number(ev.percent);
+        if (![25, 50, 75, 100].includes(pct)) return null;
+        truck.reportedCapacityPct = pct;
+        this.metrics.manualCapacityEvents++;
+        const offlineNote = this.road.offline ? ' [Offline — queued for sync]' : '';
+        if (this.road.offline) this.offlineSyncQueue.push({ time: this.time, ...ev });
+        note(this, truck, `Capacity reported: ${pct}%${offlineNote}`);
+        this.log('info', `${truck.name} manual capacity reported ${pct}%${offlineNote}`);
+
+        if (pct >= 100 && truck.status !== 'unloading' && truck.status !== 'awaiting_unload_confirm') {
+          truck.mode = 'full';
+          this.log('handoff', `${truck.name} reported 100% full — routing to Sanitary Landfill (${truck.queue.length} stops held for same truck)`);
+          this.planNext(truck);
+          this.refreshEta(truck);
+        }
+        return { type: ev.type, truckId: truck.id, percent: pct, offline: this.road.offline };
+      }
+
+      case 'UNLOAD_CONFIRMED': {
+        if (!truck) return null;
+        const unloaded = truck.load;
+        truck.load = 0;
+        truck.reportedCapacityPct = 0;
+        truck.awaitingUnloadConfirm = false;
+        truck.lastStop = -1;
+        truck.disposalTrips++;
+        this.metrics.unloadConfirmations++;
+        truck.mode = 'collect';
+        truck.status = 'driving';
+        truck.target = null;
+        if (this.road.offline) this.offlineSyncQueue.push({ time: this.time, ...ev });
+        const offlineNote = this.road.offline ? ' [Offline — queued for sync]' : '';
+        this.log('info', `${truck.name} UNLOAD CONFIRMED (reset to 0%, unloaded ${Math.round(unloaded)} kg) — ${truck.queue.length} stops left${offlineNote}`);
+        note(this, truck, `Unload confirmed (0%): ${truck.queue.length ? 'resuming stops' : 'returning to SWMO Depot'}`);
+        this.planNext(truck);
+        this.refreshEta(truck);
+        return { type: ev.type, truckId: truck.id, remainingStops: truck.queue.length };
+      }
+
+      case 'STOP_CONFIRMED': {
+        const bin = ev.binId ? this.binsById.get(ev.binId) : null;
+        if (!bin) return null;
+        bin.visited = true;
+        bin.confirmed = true;
+        bin.state = 'collected';
+        bin.collectedBy = ev.truckId || bin.collectedBy;
+        bin.collectedAt = this.time;
+        if (this.road.offline) this.offlineSyncQueue.push({ time: this.time, ...ev });
+        this.log('collect', `Driver confirmed collection at ${bin.name}`);
+        return { type: ev.type, binId: bin.id };
+      }
+
+      case 'STOP_SKIPPED': {
+        const bin = ev.binId ? this.binsById.get(ev.binId) : null;
+        if (!bin) return null;
+        bin.visited = true;
+        bin.confirmed = false;
+        bin.skipped = true;
+        bin.state = 'missed';
+        if (this.road.offline) this.offlineSyncQueue.push({ time: this.time, ...ev });
+        this.log('warning', `Driver skipped ${bin.name} (visited without collection)`);
+        return { type: ev.type, binId: bin.id };
+      }
+
+      case 'GPS_DEVIATION': {
+        if (!truck || !truck.target || truck.status === 'idle' || truck.status === 'awaiting_unload_confirm') return null;
+        const acc = Number.isFinite(ev.gpsAccuracyM) ? ev.gpsAccuracyM : 10;
+        const offM = Number.isFinite(ev.offsetM) ? ev.offsetM : 80;
+        const readings = Number.isFinite(ev.consecutiveReadings) ? ev.consecutiveReadings : ++truck.consecutiveOffRoute;
+        const cooldownOk = (this.time - truck.lastDeviationRerouteAt) >= (s.reroute_cooldown_s ?? 15);
+        const minPings = s.deviation_min_pings ?? 2;
+        const maxAcc = s.gps_accuracy_max_m ?? 35;
+        const threshM = s.deviation_threshold_m ?? 45;
+
+        if (acc > maxAcc || offM < threshM || readings < minPings || !cooldownOk) {
+          truck.gpsNoiseSuppressed++;
+          this.log('info', `${truck.name} GPS reading suppressed by hysteresis (acc=${acc}m, offset=${offM}m, streak=${readings})`);
+          return { type: ev.type, truckId: truck.id, suppressed: true };
+        }
+
+        // Valid deviation confirmed: snap to nearest road node (explicit `node` or nearby off-route node) and reroute via A*
+        let snapNode = Number.isInteger(ev.node) && ev.node >= 0 && ev.node < this.graph.nodeCount
+          ? ev.node
+          : pickDeviationNode(this.graph, truck.node, this.world.allowed, offM);
+        if (snapNode >= 0) {
+          truck.node = snapNode;
+          truck.arcs = [];
+          truck.arcPos = 0;
+        }
+        truck.consecutiveOffRoute = 0;
+        truck.lastDeviationRerouteAt = this.time;
+        const res = routerFor(this, truck).findPath(truck.node, truck.target.node, 'reroute');
+        if (res.found) {
+          truck.arcs = res.arcs;
+          truck.reroutes++;
+          truck.deviationReroutes++;
+          this.metrics.reroutes++;
+          if (this.road.offline) {
+            truck.offlineFallbackReroutes++;
+            this.log('warning', `${truck.name} GPS deviation rerouted via local free-flow A* (Offline — no live traffic)`);
+          } else {
+            this.log('event', `${truck.name} GPS deviation (${offM}m off-route) — dynamic A* reroute executed`);
+          }
+          this.refreshEta(truck);
+          return { type: ev.type, truckId: truck.id, suppressed: false, offline: this.road.offline, arcs: res.arcs.length };
+        }
+        return { type: ev.type, truckId: truck.id, suppressed: false, blocked: true };
+      }
+
+      case 'NETWORK_DISCONNECT': {
+        this.road.setOffline(true);
+        if (ev.duration > 0) {
+          this.events.push({ time: this.time + ev.duration, type: 'NETWORK_RECONNECT', source: 'auto', note: 'connectivity restored' });
+        }
+        this.log('warning', 'Offline — no live traffic; using cached routes and local free-flow A* fallback');
+        this.refreshAllEta();
+        return { type: ev.type, offline: true };
+      }
+
+      case 'NETWORK_RECONNECT': {
+        this.road.setOffline(false);
+        const synced = this.offlineSyncQueue.length;
+        this.metrics.offlineSyncedEvents += synced;
+        this.offlineSyncQueue = [];
+        this.log('info', `Connectivity restored — synced ${synced} queued offline event(s) and resumed live traffic`);
+        for (const t of this.trucks) {
+          if (t.status === 'driving' && t.target) this.replan(t, 'reconnect');
+        }
+        this.refreshAllEta();
+        return { type: ev.type, synced };
+      }
+
+      default:
+        return null;
+    }
   }
 
   // =======================================================================
@@ -680,4 +933,21 @@ export class Simulation {
     if (target.kind === 'bin') return this.binsById.get(target.binId).name;
     return target.kind === 'disposal' ? 'the disposal site' : 'the depot';
   }
+}
+
+/** Deterministic off-route node selector near `fromNode` when explicit deviation node is omitted. */
+function pickDeviationNode(graph, fromNode, allowed, targetOffsetM = 80) {
+  let best = -1;
+  let bestDiff = Infinity;
+  const fx = graph.x[fromNode];
+  const fy = graph.y[fromNode];
+  for (let i = 0; i < graph.nodeCount; i++) {
+    if (i === fromNode) continue;
+    if (allowed && allowed[i] !== 1) continue;
+    const d = Math.hypot(graph.x[i] - fx, graph.y[i] - fy);
+    if (d < 20 || d > Math.max(250, targetOffsetM * 3)) continue;
+    const diff = Math.abs(d - targetOffsetM);
+    if (diff < bestDiff) { bestDiff = diff; best = i; }
+  }
+  return best >= 0 ? best : fromNode;
 }

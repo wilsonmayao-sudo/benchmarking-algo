@@ -31,14 +31,29 @@ import { parseCityMap, buildGraphFromMap, parseCsv } from '../../data/cityMapLoa
 
 /** Defaults for every optional setting. Documented in data/scenarios/README.md. */
 export const DEFAULT_SETTINGS = {
-  heuristic: 'euclidean',      // 'euclidean' | 'manhattan'
+  heuristic: 'euclidean',      // 'euclidean' | 'manhattan' | 'alt'
+  cost_mode: 'distance',       // 'distance' (legacy) | 'time' (travel time + elevation + closures)
+  routing_engine: 'legacy',    // 'legacy' | 'fast' (timestamped typed-array workspace)
+  weight_factor: 1.0,          // 1.0 = exact optimal, >1.0 = bounded-suboptimal Weighted A* (R09)
+  alt_landmarks: 6,            // number of ALT landmarks (1..8)
+  cache_paths: false,          // versioned full-path cache keyed to RoadState.version
+  climb_weight: 0.5,
+  descent_weight: 0.15,
+  operational_mode: false,     // manual 25/50/75/100% capacity + unload confirm + same-truck resume
+  require_unload_confirm: false,
+  auto_confirm_unload_delay_s: 300,
+  manual_stop_confirm: false,  // separate visited vs confirmed state when true
+  gps_accuracy_max_m: 35,
+  deviation_threshold_m: 45,
+  deviation_min_pings: 2,
+  reroute_cooldown_s: 15,
   service_time_s: 60,          // time spent emptying one bin
   unload_time_s: 300,          // time spent unloading at the disposal site
   dt_s: 1,                     // simulation tick
   max_time_s: 6 * 3600,        // hard stop
   bin_capacity_kg: 168,        // load of a 100 %-full bin when a bin gives no capacity
   fill_thresholds: { medium: 40, high: 75 }, // % — green < medium ≤ yellow < high ≤ red
-  visit_order: 'nearest',      // 'nearest' (greedy re-ordering) | 'given' (config order)
+  visit_order: 'nearest',      // 'nearest' | 'given' | 'road_nn' | 'road2opt'
   return_to_depot: true,       // trucks drive back to the depot when their work is done
 };
 
@@ -310,16 +325,23 @@ async function buildMap(mapCfg, io, problems) {
   }
 
   if (mapCfg.type === 'geojson') {
-    if (!io.readText) { problems.push('map: type "geojson" needs a file reader'); return null; }
-    if (!mapCfg.path) { problems.push('map: type "geojson" needs a "path"'); return null; }
-    let text = await io.readText(mapCfg.path);
-    if (Array.isArray(mapCfg.connectors) && mapCfg.connectors.length > 0) {
-      text = addConnectorRoads(text, mapCfg.connectors, problems);
+    if (!io.readText && !(io.mapCache && io.mapCache.has(mapCfg.path))) {
+      problems.push('map: type "geojson" needs a file reader');
+      return null;
     }
-    const { map } = parseCityMap([{ name: mapCfg.path.split('/').pop(), text }]);
-    const graph = buildGraphFromMap(map);
+    if (!mapCfg.path) { problems.push('map: type "geojson" needs a "path"'); return null; }
+    const hasConnectors = Array.isArray(mapCfg.connectors) && mapCfg.connectors.length > 0;
+    const cacheKey = hasConnectors ? null : mapCfg.path;
+    let parsedMap = cacheKey && io.mapCache ? io.mapCache.get(cacheKey) : null;
+    if (!parsedMap) {
+      let text = await io.readText(mapCfg.path);
+      if (hasConnectors) text = addConnectorRoads(text, mapCfg.connectors, problems);
+      parsedMap = parseCityMap([{ name: mapCfg.path.split('/').pop(), text }]).map;
+      if (cacheKey && io.mapCache) io.mapCache.set(cacheKey, parsedMap);
+    }
+    const graph = buildGraphFromMap(parsedMap);
     graph.buildAdjacency();
-    return { ...finishIndexedMap(graph, 'geojson', map.mainComponent), geo: map.geo };
+    return { ...finishIndexedMap(graph, 'geojson', parsedMap.mainComponent), geo: parsedMap.geo };
   }
 
   problems.push(`map.type: unknown type "${mapCfg.type}"`);
