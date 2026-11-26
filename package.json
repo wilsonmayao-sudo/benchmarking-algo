@@ -10,13 +10,14 @@
     "selfcheck": "node tools/selfcheck.mjs",
     "checkrefs": "node tools/checkrefs.mjs",
     "compare": "node tools/compare.mjs",
-    "check": "node tools/checkrefs.mjs && node tools/selfcheck.mjs && node tools/fleetcheck.mjs && node tools/livecheck.mjs && node tools/routecheck.mjs && node tools/areacheck.mjs",
+    "check": "node tools/checkrefs.mjs && node tools/selfcheck.mjs && node tools/fleetcheck.mjs && node tools/livecheck.mjs && node tools/routecheck.mjs && node tools/areacheck.mjs && node tools/incidentcheck.mjs",
     "routecheck": "node tools/routecheck.mjs",
     "fleet": "node tools/fleetsim.mjs",
     "fleet:compare": "node tools/fleetsim.mjs --compare",
     "fleetcheck": "node tools/fleetcheck.mjs",
     "serve:python": "python -m http.server 8000",
     "livecheck": "node tools/livecheck.mjs",
-    "areacheck": "node tools/areacheck.mjs"
+    "areacheck": "node tools/areacheck.mjs",
+    "incidentcheck": "node tools/incidentcheck.mjs"
   }
 }

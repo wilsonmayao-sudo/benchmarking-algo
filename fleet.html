@@ -7,194 +7,291 @@
 <link rel="stylesheet" href="css/styles.css" />
 <link rel="stylesheet" href="css/fleet.css" />
 </head>
-<body>
+<body class="fleet-page">
 
 <header class="app-header">
   <div class="app-title">
     <h1>Fleet Simulation</h1>
-    <p>Garbage trucks on a live road network: road events, A* rerouting, ETAs, capacity handoffs.
-       <a href="index.html" class="nav-link">&larr; Pathfinding benchmark</a></p>
+    <a href="index.html" class="nav-link">&larr; Pathfinding benchmark</a>
   </div>
   <span class="clock" id="simClock">00:00:00</span>
   <span class="pill" id="fleetStatus">Loading&hellip;</span>
 </header>
 
-<main class="layout">
+<main class="fleet-app">
 
-  <!-- ---------------------------------------------------------------- -->
-  <!-- Control panel                                                     -->
-  <!-- ---------------------------------------------------------------- -->
-  <aside class="panel">
+  <!-- ================================================================ -->
+  <!-- Settings sidebar: every control lives here                       -->
+  <!-- ================================================================ -->
+  <aside class="sidebar" aria-label="Settings">
 
-    <section class="group">
-      <h2>Scenario</h2>
-      <div class="path-row">
-        <input id="scenarioPath" type="text" spellcheck="false" list="scenarioList" value="data/scenarios/naga-swmo-schedule.json" />
-        <button id="scenarioLoad" class="small" type="button">Load</button>
-      </div>
-      <datalist id="scenarioList">
-        <option value="data/scenarios/naga-swmo-schedule.json">Naga City — SWMO schedule stops, 14 trucks</option>
-        <option value="data/scenarios/naga-14-trucks.json">Naga City — random bins, 14 trucks</option>
-        <option value="data/scenarios/sample-fleet.json">Sample — 3 trucks</option>
-      </datalist>
-      <div class="dropzone small-zone">
-        <input id="scenarioFile" type="file" accept=".json,application/json" aria-label="Scenario config file" />
-        <span class="dropzone-text"><strong>Choose a config</strong> or drop a .json here</span>
-      </div>
-      <p class="hint" id="scenarioInfo"></p>
-    </section>
-
-    <section class="group">
-      <h2>Variant</h2>
-      <label class="field" id="optDayWrap" hidden>
-        <span>Schedule day (stops collected that day)</span>
-        <select id="optDay">
-          <option value="all">All days</option>
-          <option value="mon">Monday</option>
-          <option value="tue">Tuesday</option>
-          <option value="wed">Wednesday</option>
-          <option value="thu">Thursday</option>
-          <option value="fri">Friday</option>
-          <option value="sat">Saturday</option>
-          <option value="sun">Sunday</option>
-        </select>
-      </label>
-      <label class="check"><input type="checkbox" id="optEvents" checked /> Road events</label>
-      <label class="check"><input type="checkbox" id="optRandom" checked /> Random events</label>
-      <label class="field field-inline-top" for="optRandomCount">
-        <span>Number of random events</span>
-      </label>
-      <div class="path-row">
-        <input id="optRandomCount" type="number" min="0" max="200" step="1" value="0" />
-        <button id="btnReroll" class="small" type="button" title="Place the random events on different roads and times">&#127922; Re-roll</button>
-      </div>
-      <p class="hint" id="eventSeedInfo"></p>
-      <label class="field field-inline-top">
-        <span>Trucks used</span>
-        <select id="optTrucks"></select>
-      </label>
-      <p class="hint">Changing the variant resets the run. Each finished run is added to the comparison table below.</p>
-    </section>
-
-    <section class="group">
-      <h2>Playback</h2>
+    <section class="sb-block sb-play">
       <div class="btn-row">
         <button id="btnPlay" type="button" class="primary-inline">&#9654; Play</button>
         <button id="btnStep" type="button">Step 10 s</button>
         <button id="btnReset" type="button">Reset</button>
       </div>
-      <label class="field field-inline-top">
-        <span>Speed (simulated seconds per real second)</span>
+      <label class="field">
+        <span>Speed</span>
         <select id="optSpeed">
-          <option value="5">5&times;</option>
+          <option value="5">5&times; (sim s per real s)</option>
           <option value="15">15&times;</option>
           <option value="30" selected>30&times;</option>
           <option value="60">60&times;</option>
           <option value="180">180&times;</option>
         </select>
       </label>
-      <button id="btnRunToEnd" type="button" class="ghost">Run to end instantly</button>
+      <button id="btnRunToEnd" type="button" class="ghost wide">Run to end instantly</button>
     </section>
 
-    <section class="group">
-      <h2>Routes</h2>
-      <div id="routeList" class="truck-list"></div>
-      <label class="check"><input type="checkbox" id="optTruckDelays" checked /> Random delays on routes (traffic, blocked bin, truck full)</label>
-    </section>
-
-    <section class="group">
-      <h2>Trucks &amp; ETA</h2>
-      <p class="hint">Click a truck for trip details.</p>
-      <div id="truckList" class="truck-list"></div>
-    </section>
-
-    <section class="group">
-      <h2>Export</h2>
-      <div class="btn-row">
-        <button id="btnExportJson" type="button" disabled>Run JSON</button>
-        <button id="btnExportCsv" type="button" disabled>Runs CSV</button>
+    <details class="sb-section" open>
+      <summary>Scenario</summary>
+      <div class="sb-body">
+        <div class="path-row">
+          <input id="scenarioPath" type="text" spellcheck="false" list="scenarioList" value="data/scenarios/naga-swmo-schedule.json" aria-label="Scenario path" />
+          <button id="scenarioLoad" class="small" type="button">Load</button>
+        </div>
+        <datalist id="scenarioList">
+          <option value="data/scenarios/naga-swmo-schedule.json">Naga City — SWMO schedule stops, 14 trucks</option>
+          <option value="data/scenarios/naga-14-trucks.json">Naga City — random bins, 14 trucks</option>
+          <option value="data/scenarios/naga-rainy-day.json">Naga City — rainy day: floods, accidents, bin &amp; truck problems</option>
+          <option value="data/scenarios/naga-busy-day.json">Naga City — busy day: fiesta, road works, overflowing bins</option>
+          <option value="data/scenarios/sample-fleet.json">Sample — 3 trucks</option>
+        </datalist>
+        <div class="dropzone small-zone">
+          <input id="scenarioFile" type="file" accept=".json,application/json" aria-label="Scenario config file" />
+          <span class="dropzone-text"><strong>Choose a config</strong> or drop a .json here</span>
+        </div>
+        <p class="hint" id="scenarioInfo"></p>
       </div>
-      <p class="hint">JSON = everything about the current run (metrics, per-truck, per-bin, event log).
-        CSV = one row per finished run in this session, for comparing scenarios.
-        Headless: <code>npm run fleet</code> / <code>npm run fleet:compare</code>.</p>
-    </section>
+    </details>
+
+    <details class="sb-section" open>
+      <summary>Variant</summary>
+      <div class="sb-body">
+        <label class="field" id="optDayWrap" hidden>
+          <span>Schedule day</span>
+          <select id="optDay">
+            <option value="all">All days</option>
+            <option value="mon">Monday</option>
+            <option value="tue">Tuesday</option>
+            <option value="wed">Wednesday</option>
+            <option value="thu">Thursday</option>
+            <option value="fri">Friday</option>
+            <option value="sat">Saturday</option>
+            <option value="sun">Sunday</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Trucks used</span>
+          <select id="optTrucks"></select>
+        </label>
+        <div class="check-col">
+          <label class="check"><input type="checkbox" id="optEvents" checked /> Road events</label>
+          <label class="check"><input type="checkbox" id="optRandom" checked /> Random events</label>
+        </div>
+        <label class="field" for="optRandomCount"><span>Number of random events</span></label>
+        <div class="path-row">
+          <input id="optRandomCount" type="number" min="0" max="200" step="1" value="0" />
+          <button id="btnReroll" class="small" type="button" title="Place the random events on different roads and times">&#127922; Re-roll</button>
+        </div>
+        <p class="hint" id="eventSeedInfo"></p>
+        <p class="hint">Changing the variant resets the run.</p>
+      </div>
+    </details>
+
+    <details class="sb-section">
+      <summary>Map layers</summary>
+      <div class="sb-body check-col">
+        <label class="check"><input type="checkbox" id="optBasemap" checked /> Street map</label>
+        <label class="check"><input type="checkbox" id="optPaths" checked /> Planned paths</label>
+        <label class="check"><input type="checkbox" id="optEtaLabels" checked /> ETA labels</label>
+        <label class="check"><input type="checkbox" id="optBinLabels" checked /> Bin labels</label>
+        <label class="check"><input type="checkbox" id="optNodeIds" /> Node ids</label>
+      </div>
+    </details>
+
+    <details class="sb-section">
+      <summary>Legend</summary>
+      <div class="sb-body"><div class="legend" id="fleetLegend"></div></div>
+    </details>
+
+    <details class="sb-section tool-block">
+      <summary>Live events</summary>
+      <div class="sb-body">
+        <label class="field">
+          <span>Event</span>
+          <select id="liveType">
+            <optgroup label="On a road (click it on the map)">
+              <option value="ROAD_ACCIDENT">&#128165; Road accident</option>
+              <option value="FLOODED_ROAD">&#127754; Flooded road</option>
+              <option value="STALLED_VEHICLE">&#128665; Stalled vehicle</option>
+              <option value="PROCESSION">&#127881; Procession / fiesta</option>
+              <option value="ROAD_WORKS">&#128679; Road works</option>
+              <option value="HEAVY_TRAFFIC">&#128663; Heavy traffic</option>
+              <option value="HEAVY_RAIN">&#127783;&#65039; Heavy rain</option>
+              <option value="ROAD_CLOSURE">Road closure (custom)</option>
+              <option value="TRAFFIC_DELAY">Traffic delay (custom &times;)</option>
+              <option value="CLEAR">Clear road (reopen / end delay)</option>
+            </optgroup>
+            <optgroup label="At a bin (next stop of a working truck)">
+              <option value="BIN_MISSING">&#10067; Bin missing</option>
+              <option value="BIN_BLOCKED">&#9940; Bin access blocked</option>
+              <option value="BIN_DAMAGED">&#128736;&#65039; Damaged bin</option>
+              <option value="BIN_OVERFLOW">&#128465;&#65039; Overflowing bin</option>
+            </optgroup>
+            <optgroup label="A working truck">
+              <option value="TRUCK_BREAKDOWN">&#128295; Truck breakdown</option>
+              <option value="FLAT_TIRE">&#128734; Flat tire</option>
+            </optgroup>
+          </select>
+        </label>
+        <p class="hint" id="liveDesc"></p>
+        <div class="field-pair">
+          <label class="field" id="liveFactorWrap"><span>Slower &times;</span>
+            <input id="liveFactor" type="number" min="1.1" max="10" step="0.1" value="2.5" /></label>
+          <label class="field" id="liveDurationWrap"><span>For (min, 0 = until cleared)</span>
+            <input id="liveDuration" type="number" min="0" max="600" step="1" value="10" /></label>
+        </div>
+        <div class="btn-row">
+          <button id="btnPick" type="button" aria-pressed="false">&#128433; Click a road</button>
+          <button id="btnRandomNow" type="button">&#127922; Random now</button>
+        </div>
+        <p class="hint status-line" id="liveInfo">Works while playing or paused. Random events always happen near a working truck.</p>
+      </div>
+    </details>
+
+    <details class="sb-section tool-block">
+      <summary>Bins &amp; routes</summary>
+      <div class="sb-body">
+        <div class="field-pair">
+          <label class="field"><span>Bins shown</span>
+            <select id="binLimit">
+              <option value="5">5</option><option value="10">10</option><option value="20">20</option>
+              <option value="30">30</option><option value="40">40</option><option value="50">50</option>
+              <option value="60">60</option><option value="70">70</option>
+              <option value="80" selected>80</option><option value="all">All</option>
+            </select></label>
+          <strong id="binCount" class="bin-count" aria-live="polite"></strong>
+        </div>
+        <div class="btn-row">
+          <button id="btnAddBin" type="button" aria-pressed="false">&#65291; Add bin</button>
+          <button id="btnCreateRoute" type="button" aria-pressed="false">&#9998; Create route</button>
+        </div>
+        <div id="drawTools" class="btn-row" hidden>
+          <button id="btnDrawFinish" class="primary-inline" type="button">&#10003; Finish</button>
+          <button id="btnDrawUndo" type="button">Undo corner</button>
+          <button id="btnDrawCancel" type="button">Cancel</button>
+        </div>
+        <p class="hint status-line" id="editInfo" role="status"></p>
+        <button id="btnUndoMove" class="small" type="button" hidden>Undo</button>
+        <div id="routeList" class="truck-list"></div>
+        <label class="check wrap"><input type="checkbox" id="optTruckDelays" checked /> Random delays on routes (traffic, blocked bin, truck full)</label>
+      </div>
+    </details>
+
+    <details class="sb-section tool-block">
+      <summary>Testing area</summary>
+      <div class="sb-body">
+        <label class="field"><span>Kind of area</span><select id="areaKind"></select></label>
+        <div class="area-nav">
+          <button id="areaPrev" class="small" type="button" aria-label="Previous area" title="Previous area">&#9664;</button>
+          <select id="areaSelect" aria-label="Testing area"><option value="">Full fleet map</option></select>
+          <button id="areaNext" class="small" type="button" aria-label="Next area" title="Next area">&#9654;</button>
+        </div>
+        <div class="btn-row">
+          <button id="areaPick" type="button" aria-pressed="false">&#128433; Pick on map</button>
+          <button id="areaDraw" type="button" aria-pressed="false">&#9998; Draw area</button>
+        </div>
+        <button id="areaReset" class="wide" type="button" disabled>&#x21BA; Back to full fleet map</button>
+        <div id="areaCustom" class="path-row" hidden>
+          <input id="areaName" type="text" maxlength="40" aria-label="Area name" />
+          <button id="areaDelete" class="small danger" type="button">Delete</button>
+        </div>
+        <label class="field"><span>Outside the area</span>
+          <select id="areaOutside"><option value="dim">dimmed</option><option value="hide">hidden</option></select></label>
+        <div class="check-col">
+          <label class="check"><input type="checkbox" id="optAreaBorders" checked /> Area borders</label>
+          <label class="check wrap" title="Restarts the run with only the bins of the selected area"><input type="checkbox" id="optAreaBins" disabled /> Run only this area's bins (restarts)</label>
+        </div>
+        <strong id="areaStatus" class="bin-count"></strong>
+        <p class="hint status-line" id="areaInfo" role="status"></p>
+      </div>
+    </details>
+
+    <details class="sb-section">
+      <summary>Export</summary>
+      <div class="sb-body">
+        <div class="btn-row">
+          <button id="btnExportJson" type="button" disabled>Run JSON</button>
+          <button id="btnExportCsv" type="button" disabled>Runs CSV</button>
+        </div>
+        <p class="hint">JSON = the current run (metrics, per truck, per bin, event log).
+          CSV = one row per finished run, for comparing scenarios.
+          Headless: <code>npm run fleet</code> / <code>npm run fleet:compare</code>.</p>
+      </div>
+    </details>
   </aside>
 
-  <!-- ---------------------------------------------------------------- -->
-  <!-- Map                                                               -->
-  <!-- ---------------------------------------------------------------- -->
+  <!-- ================================================================ -->
+  <!-- Map column: report tabs on top, map below                        -->
+  <!-- ================================================================ -->
   <section class="stage" id="stage">
-    <div class="stage-toolbar">
-      <label class="check"><input type="checkbox" id="optBasemap" checked /> Street map</label>
-      <label class="check"><input type="checkbox" id="optPaths" checked /> Planned paths</label>
-      <label class="check"><input type="checkbox" id="optEtaLabels" checked /> ETA details</label>
-      <label class="check"><input type="checkbox" id="optBinLabels" checked /> Bin labels</label>
-      <label class="check"><input type="checkbox" id="optNodeIds" /> Node ids</label>
-      <button id="mapReset" class="small" type="button">Reset view</button>
-      <button id="btnFullscreen" class="small" type="button">&#x26F6; Full screen</button>
-      <span class="hint">scroll = zoom &middot; drag = pan</span>
-    </div>
-    <div class="stage-toolbar live-bar">
-      <button id="btnPlay2" type="button" class="small primary-inline">&#9654; Play</button>
-      <strong class="live-title">Add event now</strong>
-      <select id="liveType" aria-label="Event type">
-        <option value="ROAD_CLOSURE">Road closure</option>
-        <option value="TRAFFIC_DELAY">Traffic delay</option>
-        <option value="CLEAR">Clear road (reopen / end delay)</option>
-      </select>
-      <label class="field inline" id="liveFactorWrap"><span>slower &times;</span>
-        <input id="liveFactor" type="number" min="1.1" max="10" step="0.1" value="2.5" /></label>
-      <label class="field inline" id="liveDurationWrap"><span>for</span>
-        <input id="liveDuration" type="number" min="0" max="600" step="1" value="10" /><span>min (0 = until cleared)</span></label>
-      <button id="btnPick" class="small" type="button" aria-pressed="false">&#128433; Click a road</button>
-      <button id="btnRandomNow" class="small" type="button">&#127922; Random event now</button>
-      <span class="hint" id="liveInfo">Works while playing or paused.</span>
-    </div>
-    <div class="stage-toolbar live-bar edit-bar">
-      <label class="field inline"><span>Bins shown</span>
-        <select id="binLimit">
-          <option value="1">1</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4">4</option>
-          <option value="5">5</option>
-          <option value="6">6</option>
-          <option value="7">7</option>
-          <option value="8">8</option>
-          <option value="9">9</option>
-          <option value="10" selected>10</option>
-        </select></label>
-      <strong id="binCount" class="bin-count" aria-live="polite"></strong>
-      <button id="btnAddBin" class="small" type="button" aria-pressed="false">&#65291; Add Bin</button>
-      <button id="btnCreateRoute" class="small" type="button" aria-pressed="false">&#9998; Create Route</button>
-      <span id="drawTools" class="draw-tools" hidden>
-        <button id="btnDrawFinish" class="small primary-inline" type="button">&#10003; Finish</button>
-        <button id="btnDrawUndo" class="small" type="button">Undo corner</button>
-        <button id="btnDrawCancel" class="small" type="button">Cancel</button>
+    <nav class="tabbar" role="tablist" aria-label="Reports">
+      <button type="button" role="tab" class="tab" data-tab="eta" aria-selected="true">Trucks &amp; ETA</button>
+      <button type="button" role="tab" class="tab" data-tab="log" aria-selected="false">Run log</button>
+      <button type="button" role="tab" class="tab" data-tab="metrics" aria-selected="false">Metrics</button>
+      <button type="button" role="tab" class="tab" data-tab="trucks" aria-selected="false">Per truck</button>
+      <button type="button" role="tab" class="tab" data-tab="events" aria-selected="false">Road events</button>
+      <button type="button" role="tab" class="tab" data-tab="runs" aria-selected="false">Compare runs</button>
+      <button type="button" class="tab tab-toggle" id="tabToggle" aria-expanded="true" title="Hide / show the report panel">&#9650; Hide</button>
+      <span class="tabbar-tools">
+        <button id="btnPlay2" type="button" class="small primary-inline">&#9654; Play</button>
+        <button id="mapReset" class="small" type="button">Reset view</button>
+        <button id="btnFullscreen" class="small" type="button">&#x26F6; Full screen</button>
       </span>
-      <span class="hint" id="editInfo" role="status"></span>
-      <button id="btnUndoMove" class="small" type="button" hidden>Undo</button>
+    </nav>
+
+    <div class="drawer" id="drawer">
+      <div class="tab-pane" data-pane="eta">
+        <div class="pane-head eta-head">
+          <div id="etaSummary" class="eta-summary" aria-live="polite"></div>
+          <label class="field inline"><span>Order</span>
+            <select id="etaSort">
+              <option value="eta" selected>Soonest arrival</option>
+              <option value="name">Truck name</option>
+            </select></label>
+          <label class="check"><input type="checkbox" id="etaShowIdle" checked /> Show waiting &amp; finished</label>
+        </div>
+        <div id="truckList" class="truck-list truck-grid"></div>
+      </div>
+      <div class="tab-pane" data-pane="log" hidden>
+        <div class="pane-head">
+          <label class="field inline"><span>Show</span>
+            <select id="logFilter">
+              <option value="all">everything</option>
+              <option value="important" selected>events, handoffs &amp; warnings</option>
+              <option value="event">road events only</option>
+            </select></label>
+          <label class="check" id="areaLogWrap" hidden><input type="checkbox" id="optAreaLog" checked /> selected area only</label>
+        </div>
+        <div id="logList" class="log-list"></div>
+      </div>
+      <div class="tab-pane" data-pane="metrics" hidden>
+        <div class="table-scroll"><table id="metricsTable"></table></div>
+      </div>
+      <div class="tab-pane" data-pane="trucks" hidden>
+        <div class="table-scroll"><table id="truckTable"></table></div>
+      </div>
+      <div class="tab-pane" data-pane="events" hidden>
+        <div class="table-scroll"><table id="eventTable"></table></div>
+      </div>
+      <div class="tab-pane" data-pane="runs" hidden>
+        <p class="hint pane-hint">Each finished run is added here so you can compare scenarios and variants.</p>
+        <div class="table-scroll"><table id="runsCompareTable"></table></div>
+      </div>
     </div>
-    <div class="stage-toolbar live-bar area-bar">
-      <strong class="live-title">Testing area</strong>
-      <select id="areaKind" aria-label="Kind of area"></select>
-      <button id="areaPrev" class="small" type="button" aria-label="Previous area" title="Previous area">&#9664;</button>
-      <select id="areaSelect" aria-label="Testing area"><option value="">Full fleet map</option></select>
-      <button id="areaNext" class="small" type="button" aria-label="Next area" title="Next area">&#9654;</button>
-      <button id="areaPick" class="small" type="button" aria-pressed="false">&#128433; Pick on map</button>
-      <button id="areaDraw" class="small" type="button" aria-pressed="false">&#9998; Draw area</button>
-      <button id="areaReset" class="small" type="button" disabled>&#x21BA; Full fleet map</button>
-      <span id="areaCustom" class="draw-tools" hidden>
-        <input id="areaName" type="text" maxlength="40" aria-label="Area name" />
-        <button id="areaDelete" class="small danger" type="button">Delete area</button>
-      </span>
-      <label class="field inline"><span>Outside</span>
-        <select id="areaOutside"><option value="dim">dimmed</option><option value="hide">hidden</option></select></label>
-      <label class="check"><input type="checkbox" id="optAreaBorders" checked /> Area borders</label>
-      <label class="check" title="Restarts the run with only the bins of the selected area"><input type="checkbox" id="optAreaBins" disabled /> Run only this area's bins (restarts)</label>
-      <strong id="areaStatus" class="bin-count"></strong>
-      <span class="hint" id="areaInfo" role="status"></span>
-    </div>
+
     <div class="view-card map-card">
       <div class="map-zoom"><button id="mapZoomIn" type="button" aria-label="Zoom in">+</button><button id="mapZoomOut" type="button" aria-label="Zoom out">&minus;</button></div>
       <canvas id="fleetCanvas"></canvas>
@@ -207,41 +304,8 @@
         <div id="sideFoot" class="side-foot"></div>
       </div>
     </div>
-    <div class="legend" id="fleetLegend"></div>
   </section>
 </main>
-
-<!-- ---------------------------------------------------------------- -->
-<!-- Log + metrics                                                     -->
-<!-- ---------------------------------------------------------------- -->
-<section class="results-wrap fleet-results">
-  <div class="fleet-grid">
-    <div>
-      <h3 class="section-title">Run log
-        <select id="logFilter" class="inline-select">
-          <option value="all">everything</option>
-          <option value="important" selected>events, handoffs &amp; warnings</option>
-          <option value="event">road events only</option>
-        </select>
-        <label class="check inline-select" id="areaLogWrap" hidden><input type="checkbox" id="optAreaLog" checked /> selected area only</label>
-      </h3>
-      <div id="logList" class="log-list"></div>
-    </div>
-    <div>
-      <h3 class="section-title">Benchmark metrics (this run)</h3>
-      <div class="table-scroll"><table id="metricsTable"></table></div>
-    </div>
-  </div>
-
-  <h3 class="section-title">Per truck</h3>
-  <div class="table-scroll"><table id="truckTable"></table></div>
-
-  <h3 class="section-title">Road event log</h3>
-  <div class="table-scroll"><table id="eventTable"></table></div>
-
-  <h3 class="section-title">Finished runs (compare scenarios / variants)</h3>
-  <div class="table-scroll"><table id="runsCompareTable"></table></div>
-</section>
 
 <div id="fileProtocolWarning" class="overlay" hidden>
   <div class="overlay-card">
@@ -252,6 +316,31 @@
 </div>
 <script>
   if (location.protocol === 'file:') document.getElementById('fileProtocolWarning').hidden = false;
+
+  // Report tabs above the map. Clicking the open tab (or Hide) collapses the panel.
+  (function () {
+    const tabs = [...document.querySelectorAll('.tab[data-tab]')];
+    const panes = [...document.querySelectorAll('.tab-pane')];
+    const drawer = document.getElementById('drawer');
+    const toggle = document.getElementById('tabToggle');
+    const setOpen = (open) => {
+      drawer.hidden = !open;
+      toggle.setAttribute('aria-expanded', String(open));
+      toggle.innerHTML = open ? '&#9650; Hide' : '&#9660; Show';
+    };
+    const show = (name) => {
+      for (const t of tabs) t.setAttribute('aria-selected', String(t.dataset.tab === name));
+      for (const p of panes) p.hidden = p.dataset.pane !== name;
+      setOpen(true);
+    };
+    for (const t of tabs) {
+      t.addEventListener('click', () => {
+        if (t.getAttribute('aria-selected') === 'true' && !drawer.hidden) setOpen(false);
+        else show(t.dataset.tab);
+      });
+    }
+    toggle.addEventListener('click', () => setOpen(drawer.hidden));
+  })();
 </script>
 <script type="module" src="js/fleetui/fleetMain.js"></script>
 </body>

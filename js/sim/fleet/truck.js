@@ -64,6 +64,20 @@ export function lockedArc(truck) {
 }
 
 /** Does the remaining (not yet entered) part of the route use road `edge`? */
+/**
+ * What a full truck does with the bins it has left.
+ *   'return'  — drive to the landfill, unload, come back and finish its own bins. This is how an
+ *               area truck works (SWMO: each truck covers its own schedule area), and the default
+ *               for trucks with `areas`.
+ *   'handoff' — give the rest to other trucks with room (default for trucks without an area).
+ * settings.full_truck forces one of the two for every truck.
+ */
+export function keepsOwnBins(truck, settings) {
+  if (settings.full_truck === 'handoff') return false;
+  if (settings.full_truck === 'return') return true;
+  return Array.isArray(truck.areas) && truck.areas.length > 0;
+}
+
 export function routeUsesEdge(graph, truck, edge) {
   const from = lockedArc(truck) !== null ? 1 : 0;
   for (let i = from; i < truck.arcs.length; i++) {

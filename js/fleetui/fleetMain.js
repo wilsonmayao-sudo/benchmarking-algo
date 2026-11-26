@@ -8,6 +8,7 @@ import { Simulation } from '../sim/simulation.js';
 import { toJSON, toCSV } from '../sim/metrics.js';
 import { fmtClock } from '../sim/fleet/eta.js';
 import { mulberry32 } from '../core/rng.js';
+import { INCIDENTS, DEFAULT_INCIDENT_MIX, isStopIncident, incidentEvent } from '../sim/events/incidents.js';
 import { FleetMapView } from './mapView.js';
 import { FleetEditor } from './editor.js';
 import { AreaPanel } from './areaPanel.js';
@@ -197,13 +198,19 @@ function frame(ts) {
 function refreshPanels(full = false) {
   const sim = state.sim;
   areas.refresh();
-  renderTruckList($('truckList'), sim, map.focus);
+  renderTruckList($('truckList'), sim, map.focus, {
+    sort: $('etaSort').value, showIdle: $('etaShowIdle').checked, summaryEl: $('etaSummary'),
+  });
   renderLog($('logList'), sim.logEntries, $('logFilter').value, areas.logFilter());
   renderMetrics($('metricsTable'), sim.summary());
   renderTruckTable($('truckTable'), sim);
   editor.refresh();
   renderEventTable($('eventTable'), sim);
   if (full) renderRunsTable($('runsCompareTable'), state.runs);
+}
+
+for (const id of ['etaSort', 'etaShowIdle']) {
+  $(id).addEventListener('change', () => { if (state.sim) refreshPanels(); });
 }
 
 function onFinished() {
@@ -286,10 +293,51 @@ function liveMessage(text, kind = '') {
   el.className = `hint ${kind}`;
 }
 
+const LIVE_DESC = {
+  ROAD_CLOSURE: 'Closes the road you click. Trucks using it reroute.',
+  TRAFFIC_DELAY: 'Slows the road you click by the factor below.',
+  CLEAR: 'Click a closed or slow road to return it to normal.',
+  ROAD_ACCIDENT: 'Closes the road you click until the accident is cleared.',
+  FLOODED_ROAD: 'The road is under water and closed for a long time.',
+  STALLED_VEHICLE: 'A broken-down vehicle closes the road for a few minutes.',
+  PROCESSION: 'A procession or fiesta closes the road for a while.',
+  ROAD_WORKS: 'Road works: one lane, the road is 2–3× slower for a long time.',
+  HEAVY_TRAFFIC: 'Heavy traffic slows the road.',
+  HEAVY_RAIN: 'Rain slows the road a little.',
+  BIN_MISSING: 'A bin on a working truck’s next stops is gone: it is skipped and counted as missed.',
+  BIN_BLOCKED: 'A parked vehicle blocks a bin: the truck loses extra minutes there.',
+  BIN_DAMAGED: 'A broken bin has to be emptied by hand: extra minutes at the stop.',
+  BIN_OVERFLOW: 'Garbage piled around a bin: heavier and slower to load.',
+  TRUCK_BREAKDOWN: 'A working truck breaks down and stands still for repairs.',
+  FLAT_TIRE: 'A working truck stops to change a tire.',
+};
+const midMinutes = (range) => Math.round((range[0] + range[1]) / 2 / 60);
+
 function syncLiveInputs() {
   const type = $('liveType').value;
+  const spec = INCIDENTS[type];
+  const stop = isStopIncident(type);
   $('liveFactorWrap').hidden = type !== 'TRAFFIC_DELAY';
-  $('liveDurationWrap').hidden = type === 'CLEAR';
+  $('liveDurationWrap').hidden = type === 'CLEAR' || (stop && !spec.duration);
+  if (spec?.duration) $('liveDuration').value = midMinutes(spec.duration);
+  $('liveDesc').textContent = LIVE_DESC[type] || '';
+  if (stop && map.pickMode) setPicking(false);
+  $('btnPick').innerHTML = stop ? '&#9889; Apply near a truck' : map.pickMode ? $('btnPick').innerHTML : '&#128433; Click a road';
+}
+
+/** Bin / truck incident chosen in the live panel: applied right away, next to a working truck. */
+function applyStopIncident() {
+  const sim = state.sim;
+  if (!sim || sim.finished) { liveMessage('The run has finished — press Reset to start a new one.', 'err'); return; }
+  const kind = $('liveType').value;
+  const extra = {};
+  if (INCIDENTS[kind].duration) extra.duration = Math.round(Math.max(1, Number($('liveDuration').value) || 1) * 60);
+  const ev = incidentEvent(kind, { time: sim.time, pick: state.liveRng(), source: 'manual', note: 'added from the panel', extra });
+  const entry = sim.injectEvent(ev);
+  if (!entry) { liveMessage('Could not add that event.', 'err'); return; }
+  const none = entry.edge === '—';
+  liveMessage(`${fmtClock(sim.time)} ${entry.label}${none ? '' : ` — ${entry.edge}`}: ${entry.description}`, none ? 'err' : 'ok');
+  refreshPanels();
 }
 
 /** Place the event chosen in the live bar on road `edge`, at the current simulated time. */
@@ -302,6 +350,14 @@ function placeLiveEvent(edge) {
   if (type === 'CLEAR') {
     const applied = sim.clearRoad(edge);
     liveMessage(applied ? `${fmtClock(sim.time)} cleared ${name}` : `${name} is already open with no delay`, applied ? 'ok' : '');
+  } else if (INCIDENTS[type]) {
+    const minutes = Math.max(0, Number($('liveDuration').value) || 0);
+    const ev = incidentEvent(type, { time: sim.time, edge, near: false, source: 'manual', note: 'added from the map', extra: { duration: Math.round(minutes * 60) } });
+    const entry = sim.injectEvent(ev);
+    if (!entry) { liveMessage('Could not add that event.', 'err'); return; }
+    const who = entry.rerouted.length ? ` · rerouted ${entry.rerouted.join(', ')}` : ' · no truck affected';
+    const blocked = entry.blocked.length ? ` · BLOCKED ${entry.blocked.join(', ')}` : '';
+    liveMessage(`${fmtClock(sim.time)} ${entry.label} on ${name}${who}${blocked}`, blocked ? 'err' : 'ok');
   } else {
     const minutes = Math.max(0, Number($('liveDuration').value) || 0);
     const ev = { type, edge, duration: Math.round(minutes * 60), note: 'added from the map' };
@@ -328,25 +384,20 @@ function setPicking(on) {
 
 map.onRoadPick = placeLiveEvent;
 $('liveType').addEventListener('change', syncLiveInputs);
-$('btnPick').addEventListener('click', () => setPicking(!map.pickMode));
+$('btnPick').addEventListener('click', () => (isStopIncident($('liveType').value) ? applyStopIncident() : setPicking(!map.pickMode)));
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && map.pickMode) setPicking(false); });
 
 $('btnRandomNow').addEventListener('click', () => {
   const sim = state.sim;
   if (!sim || sim.finished) { liveMessage('The run has finished — press Reset to start a new one.', 'err'); return; }
-  const settings = state.config.events?.random || {};
-  // Prefer a road that is currently normal, so the event visibly changes something.
-  let ev = null;
-  for (let tries = 0; tries < 20; tries++) {
-    ev = randomRoadEvent(state.liveRng, sim.graph, settings, sim.time);
-    if (!sim.road.isClosed(ev.edge) && sim.road.multiplier[ev.edge] === 1) break;
-  }
-  const entry = sim.injectEvent({ ...ev, source: 'random (live)', note: 'random, added while running' });
+  // Any real-life incident, placed next to a working truck by the simulation.
+  const settings = { ...(state.config.events?.random || {}), types: DEFAULT_INCIDENT_MIX };
+  const ev = randomRoadEvent(state.liveRng, sim.graph, settings, sim.time);
+  const entry = sim.injectEvent({ ...ev, near: true, source: 'random (live)', note: 'random, added while running' });
   if (!entry) { liveMessage('Could not add a random event.', 'err'); return; }
-  const what = ev.type === 'ROAD_CLOSURE'
-    ? `closed ${entry.edge} for ${Math.round(ev.duration / 60)} min`
-    : `slowed ${entry.edge} ×${ev.factor} for ${Math.round(ev.duration / 60)} min`;
-  liveMessage(`${fmtClock(sim.time)} random: ${what}${entry.rerouted.length ? ` · rerouted ${entry.rerouted.join(', ')}` : ''}`, 'ok');
+  const where = entry.edge === '—' ? '' : ` — ${entry.edge}`;
+  const extra = entry.rerouted.length ? ` · rerouted ${entry.rerouted.join(', ')}` : '';
+  liveMessage(`${fmtClock(sim.time)} random: ${entry.label}${where}: ${entry.description}${extra}`, 'ok');
   refreshPanels();
 });
 

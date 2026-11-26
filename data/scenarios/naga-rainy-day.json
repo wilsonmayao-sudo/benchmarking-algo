@@ -1,0 +1,246 @@
+{
+  "name": "Naga City — rainy day: floods, accidents, bin & truck problems",
+  "description": "Same trucks, stops and roads as the SWMO schedule scenario, on a rainy-season day. Low roads flood and close for a long time, rain slows traffic, slippery roads cause accidents, wet garbage overflows bins and trucks get flat tires. Every random event happens next to a truck that is working at that moment.",
+  "seed": 20261118,
+  "map": {
+    "type": "geojson",
+    "path": "data/Naga_City_roads.geojson"
+  },
+  "test_areas": {
+    "schedule": "data/collection_schedules.csv",
+    "boundaries": "data/naga_areas.geojson"
+  },
+  "depot": {
+    "lat": 13.618842,
+    "lng": 123.1995803,
+    "name": "SWMO Depot (Solid Waste Management Office)"
+  },
+  "disposal": {
+    "lat": 13.6212151,
+    "lng": 123.2576126,
+    "name": "SWMO - Sanitary Landfill (San Isidro)"
+  },
+  "settings": {
+    "heuristic": "euclidean",
+    "service_time_s": 60,
+    "unload_time_s": 300,
+    "dt_s": 1,
+    "max_time_s": 43200,
+    "bin_capacity_kg": 120,
+    "fill_thresholds": {
+      "medium": 40,
+      "high": 75
+    },
+    "visit_order": "nearest",
+    "return_to_depot": true
+  },
+  "trucks": [
+    {
+      "id": "TRK-01",
+      "name": "Hino 500 Unit 1",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-1"
+      ]
+    },
+    {
+      "id": "TRK-02",
+      "name": "Hino 500 Unit 2",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-2A"
+      ]
+    },
+    {
+      "id": "TRK-03",
+      "name": "Hino 500 Unit 3",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-2B"
+      ]
+    },
+    {
+      "id": "TRK-10",
+      "name": "Compactor Truck 1",
+      "speed_kph": 22,
+      "max_capacity": 4116,
+      "current_load": 0,
+      "areas": [
+        "AREA-4",
+        "COMPACTOR"
+      ]
+    },
+    {
+      "id": "TRK-11",
+      "name": "Small Compactor Truck 1",
+      "speed_kph": 22,
+      "max_capacity": 588,
+      "current_load": 0,
+      "areas": [
+        "AREA-12"
+      ]
+    },
+    {
+      "id": "TRK-12",
+      "name": "Hino 300 Unit 1",
+      "speed_kph": 22,
+      "max_capacity": 2058,
+      "current_load": 0,
+      "areas": [
+        "AREA-3"
+      ]
+    },
+    {
+      "id": "TRK-13",
+      "name": "Isuzu Giga 1",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-5"
+      ]
+    },
+    {
+      "id": "TRK-14",
+      "name": "Isuzu Giga 2",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-6"
+      ]
+    },
+    {
+      "id": "TRK-15",
+      "name": "Hino 500 Unit 7",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-7"
+      ]
+    },
+    {
+      "id": "TRK-16",
+      "name": "Hino 500 Unit 8",
+      "speed_kph": 22,
+      "max_capacity": 2940,
+      "current_load": 0,
+      "areas": [
+        "AREA-8"
+      ]
+    },
+    {
+      "id": "TRK-17",
+      "name": "Fuso Fighter 1",
+      "speed_kph": 22,
+      "max_capacity": 2352,
+      "current_load": 0,
+      "areas": [
+        "AREA-9"
+      ]
+    },
+    {
+      "id": "TRK-18",
+      "name": "Fuso Fighter 2",
+      "speed_kph": 22,
+      "max_capacity": 2352,
+      "current_load": 0,
+      "areas": [
+        "AREA-10",
+        "AREA-15"
+      ]
+    },
+    {
+      "id": "TRK-19",
+      "name": "Dongfeng Dump 1",
+      "speed_kph": 22,
+      "max_capacity": 3528,
+      "current_load": 0,
+      "areas": [
+        "AREA-11"
+      ]
+    },
+    {
+      "id": "TRK-20",
+      "name": "Dongfeng Dump 2",
+      "speed_kph": 22,
+      "max_capacity": 3528,
+      "current_load": 0,
+      "areas": [
+        "AREA-13",
+        "FLEET-CLEARING"
+      ]
+    }
+  ],
+  "bins": {
+    "csv": "data/collection_schedules.csv",
+    "stop_types": [
+      "collection"
+    ],
+    "max_snap_m": 300,
+    "fill": [
+      30,
+      100
+    ],
+    "seed": 7,
+    "assign_by_area": true
+  },
+  "events": {
+    "scheduled": [
+      {
+        "type": "HEAVY_RAIN",
+        "time_s": 300,
+        "note": "rain starts"
+      },
+      {
+        "type": "FLOODED_ROAD",
+        "time_s": 900,
+        "note": "low road under water"
+      },
+      {
+        "type": "ROAD_ACCIDENT",
+        "time_s": 1500,
+        "note": "slippery road"
+      },
+      {
+        "type": "FLAT_TIRE",
+        "time_s": 2100,
+        "truck": "TRK-03"
+      },
+      {
+        "type": "BIN_OVERFLOW",
+        "time_s": 2400,
+        "note": "wet garbage"
+      }
+    ],
+    "random": {
+      "enabled": true,
+      "seed": 31,
+      "count": 20,
+      "window_s": [
+        300,
+        5400
+      ],
+      "types": {
+        "FLOODED_ROAD": 0.18,
+        "HEAVY_RAIN": 0.16,
+        "ROAD_ACCIDENT": 0.12,
+        "HEAVY_TRAFFIC": 0.1,
+        "STALLED_VEHICLE": 0.06,
+        "BIN_OVERFLOW": 0.14,
+        "BIN_DAMAGED": 0.06,
+        "BIN_BLOCKED": 0.04,
+        "BIN_MISSING": 0.03,
+        "FLAT_TIRE": 0.07,
+        "TRUCK_BREAKDOWN": 0.04
+      }
+    }
+  }
+}

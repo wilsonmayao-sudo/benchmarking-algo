@@ -82,3 +82,46 @@ of the bounding box, so (0,0) is bottom-left and (1,1) is top-right. On imported
 only the largest connected component is used.
 
 If a config is invalid, loading fails with one error that lists every problem.
+
+## Real-life incidents
+
+Besides `ROAD_CLOSURE`, `ROAD_REOPEN` and `TRAFFIC_DELAY`, `events.scheduled[].type` and the
+keys of `events.random.types` accept these incidents (defined in `js/sim/events/incidents.js`):
+
+| Group | Type | What happens |
+|---|---|---|
+| road | `ROAD_ACCIDENT` | road closed 10–30 min |
+| road | `FLOODED_ROAD` | road closed 30–90 min |
+| road | `STALLED_VEHICLE` | road closed 5–15 min |
+| road | `PROCESSION` | road closed 15–45 min (fiesta / procession) |
+| road | `ROAD_WORKS` | road 1.8–3× slower for 30–120 min |
+| road | `HEAVY_TRAFFIC` | road 1.5–3× slower for 5–20 min |
+| road | `HEAVY_RAIN` | road 1.3–1.8× slower for 15–45 min |
+| bin | `BIN_MISSING` | bin is gone: skipped, counted as missed |
+| bin | `BIN_BLOCKED` | parked vehicle: +5–15 min at the stop |
+| bin | `BIN_DAMAGED` | loaded by hand: +3–8 min at the stop |
+| bin | `BIN_OVERFLOW` | 1.3–1.8× heavier, +2–5 min at the stop |
+| truck | `TRUCK_BREAKDOWN` | truck stands still 15–40 min |
+| truck | `FLAT_TIRE` | truck stands still 10–20 min |
+
+**Every random event happens near the trucks.** Its road, bin or truck is chosen at the moment it
+happens: a road a working truck is about to drive, a bin among a working truck's next stops, or
+a truck that is out working. Scheduled incidents work the same way unless they name an `edge`
+(road incidents), a `bin` or a `truck`. Optional overrides: `duration_s`, `factor`, `extra_s`.
+
+```json
+{ "type": "FLOODED_ROAD", "time_s": 900, "note": "low road under water" }
+{ "type": "FLAT_TIRE", "time_s": 2100, "truck": "TRK-03" }
+```
+
+Scenarios: `naga-rainy-day.json` (floods, rain, accidents, flat tires, overflowing bins) and
+`naga-busy-day.json` (fiesta processions, road works, blocked / overflowing / missing bins).
+
+## Full trucks (`settings.full_truck`)
+
+When the next bin would not fit, a truck with `areas` drives to the landfill, unloads and comes
+back to finish its own area (`"return"`, how SWMO area trucks work). A truck without an area hands
+its remaining bins to other trucks with room (`"handoff"`). Set `"full_truck": "return"` or
+`"handoff"` in `settings` to force one behaviour for every truck. The route-end ETA includes
+those landfill trips and any extra minutes at problem bins, so with no unforeseen events it
+matches the real finish to within a second.

@@ -25,6 +25,7 @@ import { truckXY } from '../sim/fleet/truck.js';
 import { numberOf, remainingPath } from '../sim/fleet/routes.js';
 import { pointInPolygon } from '../sim/fleet/routeAreas.js';
 import { fmtDuration } from '../sim/fleet/eta.js';
+import { INCIDENTS } from '../sim/events/incidents.js';
 
 /** Lucide icon paths (24×24), identical to the WebApp LiveFleetMap markers. */
 export const ICON_PATHS = {
@@ -75,6 +76,46 @@ const COLORS = {
   depot: '#e2e8f0',
   disposal: '#a3a3a3',
 };
+
+/**
+ * Path colour for the map: light colours (e.g. pastel ones from a config) are darkened so a
+ * path always reads clearly on the bright street map. Dark colours pass through unchanged.
+ */
+const inkCache = new Map();
+function ink(color) {
+  let out = inkCache.get(color);
+  if (out) return out;
+  out = color;
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(color).trim());
+  if (m) {
+    const n = parseInt(m[1], 16);
+    let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    const target = 0.32;
+    if (lum > target) {
+      const k = target / lum;
+      r = Math.round(r * k); g = Math.round(g * k); b = Math.round(b * k);
+      out = `rgb(${r}, ${g}, ${b})`;
+    }
+  }
+  inkCache.set(color, out);
+  return out;
+}
+
+/** Stroke the current path twice: a white halo underneath, then the coloured line. */
+function casedStroke(ctx, color, width, dash = []) {
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.setLineDash([]);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+  ctx.lineWidth = width + 3.5;
+  ctx.stroke();
+  ctx.setLineDash(dash);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
 
 export class FleetMapView {
   constructor(canvas) {
@@ -337,9 +378,10 @@ export class FleetMapView {
         ctx.beginPath();
         this._zonePath(ctx, z);
         if (hover) { ctx.fillStyle = 'rgba(6, 182, 212, 0.25)'; ctx.fill('evenodd'); }
-        ctx.strokeStyle = sel ? 'rgba(226, 232, 240, 0.65)' : 'rgba(14, 116, 144, 0.9)';
-        ctx.lineWidth = hover ? 3 : 1.5;
-        ctx.setLineDash([7, 5]);
+        // quiet outlines: they give context without competing with the truck paths
+        ctx.strokeStyle = sel ? 'rgba(226, 232, 240, 0.5)' : hover ? 'rgba(14, 116, 144, 0.95)' : 'rgba(14, 116, 144, 0.38)';
+        ctx.lineWidth = hover ? 2.5 : 1.2;
+        ctx.setLineDash(hover ? [] : [3, 5]);
         ctx.stroke();
         ctx.setLineDash([]);
         const b = z.bbox;
@@ -610,6 +652,9 @@ export class FleetMapView {
 
     ctx.fillStyle = '#e5e7eb';
     ctx.fillRect(0, 0, w, h);
+    // Muted tiles: the colourful street map otherwise drowns out the truck paths.
+    ctx.save();
+    ctx.filter = 'saturate(0.3) contrast(0.92)';
     for (let ty = y0; ty <= y1; ty++) {
       for (let tx = x0; tx <= x1; tx++) {
         const tile = this._tile(z, tx, ty);
@@ -619,6 +664,7 @@ export class FleetMapView {
         ctx.drawImage(tile.img, left, top, right - left, bottom - top);
       }
     }
+    ctx.restore();
     // A light veil keeps the simulation layers readable on top of the busy street map.
     ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
     ctx.fillRect(0, 0, w, h);
@@ -771,7 +817,7 @@ export class FleetMapView {
     }
     // On the street map the network is a faint blue overlay (the tiles already show streets);
     // it still matters because it shows exactly which roads the simulation can use.
-    ctx.strokeStyle = onStreetMap ? 'rgba(30, 64, 175, 0.30)' : COLORS.road;
+    ctx.strokeStyle = onStreetMap ? 'rgba(71, 85, 105, 0.22)' : COLORS.road;
     ctx.lineWidth = onStreetMap ? 2 : dense ? 1 : 4;
     ctx.lineCap = 'round';
     ctx.stroke();
@@ -792,8 +838,9 @@ export class FleetMapView {
       ctx.stroke();
       ctx.setLineDash([]);
       const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-      this._tag(ctx, closed ? `✕ ${world.edgeLabel(e)}` : `×${m.toFixed(1)}`, mx, my - 12,
-        closed ? COLORS.roadClosed : COLORS.roadDelayed);
+      const why = INCIDENTS[this.sim.roadCause?.get(e)];
+      const text = closed ? `✕ ${why ? why.short : world.edgeLabel(e)}` : `${why ? `${why.short} ` : ''}×${m.toFixed(1)}`;
+      this._tag(ctx, text, mx, my - 12, closed ? COLORS.roadClosed : COLORS.roadDelayed);
     }
 
     if (this.options.nodeIds && !dense) {
@@ -821,30 +868,53 @@ export class FleetMapView {
           ctx.beginPath();
           ctx.moveTo(tx(graph.x[s]) + off, ty(graph.y[s]) + off);
           for (const a of later) ctx.lineTo(tx(graph.x[graph.adjNeighbor[a]]) + off, ty(graph.y[graph.adjNeighbor[a]]) + off);
-          ctx.strokeStyle = truck.color;
-          ctx.globalAlpha = alpha;
-          ctx.lineWidth = 2.5;
-          ctx.setLineDash([6, 4]);
-          ctx.stroke();
-          ctx.setLineDash([]);
+          ctx.globalAlpha = 0.9 * alpha;
+          casedStroke(ctx, ink(truck.color), 2.5, [7, 6]);
           ctx.globalAlpha = 1;
         }
       }
       if (truck.arcs.length === 0) return;
-      ctx.beginPath();
-      ctx.moveTo(tx(p.x) + off, ty(p.y) + off);
+      const pts = [[tx(p.x) + off, ty(p.y) + off]];
       for (const a of truck.arcs) {
         const v = graph.adjNeighbor[a];
-        ctx.lineTo(tx(graph.x[v]) + off, ty(graph.y[v]) + off);
+        pts.push([tx(graph.x[v]) + off, ty(graph.y[v]) + off]);
       }
-      ctx.strokeStyle = truck.color;
-      ctx.globalAlpha = 0.75 * alpha;
-      ctx.lineWidth = 3;
-      ctx.setLineDash(truck.status === 'blocked' ? [4, 4] : []);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.beginPath();
+      pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      const color = truck.status === 'blocked' ? '#b91c1c' : ink(truck.color);
+      ctx.globalAlpha = alpha;
+      casedStroke(ctx, color, 4.5, truck.status === 'blocked' ? [6, 5] : []);
+      this._arrows(ctx, pts);
       ctx.globalAlpha = 1;
     });
+  }
+
+  /** Small white chevrons along a path, every ~90 px, pointing the way the truck drives. */
+  _arrows(ctx, pts) {
+    const GAP = 90;
+    let carry = GAP / 2;
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    for (let k = 1; k < pts.length; k++) {
+      const [x0, y0] = pts[k - 1], [x1, y1] = pts[k];
+      const len = Math.hypot(x1 - x0, y1 - y0);
+      if (len === 0) continue;
+      const ux = (x1 - x0) / len, uy = (y1 - y0) / len;
+      let d = carry;
+      while (d < len) {
+        const x = x0 + ux * d, y = y0 + uy * d;
+        ctx.beginPath();
+        ctx.moveTo(x + ux * 4, y + uy * 4);
+        ctx.lineTo(x - ux * 3 - uy * 3.5, y - uy * 3 + ux * 3.5);
+        ctx.lineTo(x - ux * 1.2, y - uy * 1.2);
+        ctx.lineTo(x - ux * 3 + uy * 3.5, y - uy * 3 - ux * 3.5);
+        ctx.closePath();
+        ctx.fill();
+        d += GAP;
+      }
+      carry = d - len;
+    }
+    ctx.restore();
   }
 
   /** Depot (warehouse icon) and disposal site (landfill icon), WebApp "facility" style. */
@@ -901,6 +971,22 @@ export class FleetMapView {
       ctx.fill();
       ctx.stroke();
       this._icon(ctx, 'bin', x, y, 16, '#0f172a', 2.3);
+      // real-life problem at this bin (missing, blocked, damaged, overflowing): red badge + tag
+      if (bin.incident && bin.state !== 'collected') {
+        ctx.beginPath();
+        ctx.arc(x + s, y - s, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#dc2626';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 10px "Segoe UI", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('!', x + s, y - s + 0.5);
+        this._tag(ctx, `⚠ ${bin.incident}`, x, y + 42, '#f87171');
+      }
 
       // assigned truck: ring in the truck's colour
       const owner = bin.state === 'assigned' ? truckById.get(bin.truckId) : null;
@@ -930,7 +1016,7 @@ export class FleetMapView {
           : bin.state === 'pending' ? 'PENDING'
           : bin.state === 'missed' ? 'MISSED'
           : owner ? owner.name.replace('Truck ', 'T') : '';
-        if (!route && bin.state !== 'collected') this._tag(ctx, 'Unassigned', x, y + 42, COLORS.textDim);
+        if (!route && bin.state !== 'collected' && !bin.incident) this._tag(ctx, 'Unassigned', x, y + 42, COLORS.textDim);
         if (who) this._tag(ctx, who, x, y + 25, owner ? owner.color : bin.state === 'pending' ? '#eab308' : COLORS.textDim);
       }
     }

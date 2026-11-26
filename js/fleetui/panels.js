@@ -3,30 +3,87 @@
  * comparison, legend. Pure rendering — reads the simulation, never changes it.
  */
 
-import { etaLines, ICON_PATHS } from './mapView.js';
+import { ICON_PATHS } from './mapView.js';
 import { BIN_STATUS_COLORS } from '../sim/fleet/bins.js';
 import { truckRows } from '../sim/metrics.js';
 import { fmtDuration } from '../sim/fleet/eta.js';
+import { INCIDENTS, incidentLabel, incidentIcon } from '../sim/events/incidents.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-export function renderTruckList(el, sim, focus = null) {
-  // Selected testing area: its trucks first, the others dimmed or left out.
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true });
+const nextAt = (t) => (t.eta && Number.isFinite(t.eta.nextAt) ? t.eta.nextAt : Infinity);
+
+/** Which group a truck's card goes in: working now, waiting at the depot, or finished. */
+function groupOf(t) {
+  if (t.status !== 'idle') return 'active';
+  return t.trip && t.trip.finishedAt !== null && t.trip.finishedAt !== undefined ? 'done' : 'idle';
+}
+
+function truckCard(t, sim, rank, dim) {
+  const pct = Math.min(100, (t.load / t.maxCapacity) * 100);
+  const eta = t.eta;
+  const group = groupOf(t);
+  let what, when = '', sub;
+  const repair = t.incident && t.incident.until > sim.time && t.status !== 'idle';
+  if (repair) { what = `${t.incident.icon} ${t.incident.label}`; when = fmtDuration(t.incident.until - sim.time); sub = `back on the road in ${when} · ${t.collected} collected`; }
+  else if (t.status === 'blocked') { what = 'No route — waiting for a reopen'; sub = `${t.collected} collected`; }
+  else if (group === 'done') { what = 'Trip finished'; sub = `${t.collected} collected`; }
+  else if (!eta || t.status === 'idle') { what = 'Waiting at the depot'; sub = `${t.collected} collected`; }
+  else {
+    const verb = t.status === 'servicing' ? 'Emptying' : t.status === 'unloading' ? 'Unloading at' : 'To';
+    const directions = /^(to|proceed|straight|left|right|turn|head|continue|go)\s/i.test(eta.targetName);
+    what = verb === 'To' && directions ? eta.targetName : `${verb} ${eta.targetName}`;
+    when = fmtDuration(eta.nextAt - sim.time);
+    sub = `route ends in ${fmtDuration(eta.endAt - sim.time)} · ${t.collected} collected`;
+  }
+  const status = group === 'done' ? 'done' : repair ? 'repair' : t.mode === 'full' ? 'full' : t.status;
+  const tip = `Show trip details${t.queue.length ? `
+Next stops: ${t.queue.join(', ')}` : ''}`;
+  return `
+    <div class="truck-card s-${status}${t.status === 'blocked' ? ' blocked' : ''}${dim ? ' outside' : ''}" data-truck="${esc(t.id)}" title="${esc(tip)}" style="--truck:${t.color}">
+      <div class="t-head">${rank ? `<span class="t-rank">${rank}</span>` : ''}<span class="t-name">${esc(t.name)}</span><span class="t-status">${esc(status)}</span></div>
+      <div class="t-eta"><span class="t-what">${esc(what)}</span>${when ? `<b>${esc(when)}</b>` : ''}</div>
+      <div class="t-sub">${esc(sub)}</div>
+      <div class="t-load"><div class="loadbar ${pct >= 100 ? 'over' : ''}"><div style="width:${pct}%"></div></div><span>${Math.round(t.load)} / ${t.maxCapacity} kg</span></div>
+    </div>`;
+}
+
+/**
+ * Truck & ETA cards. Active trucks always come first — blocked ones on top, then the
+ * soonest arrival (or by name) — followed by trucks waiting at the depot and finished ones.
+ * opts: { sort: 'eta' | 'name', showIdle: boolean, summaryEl: HTMLElement }
+ */
+export function renderTruckList(el, sim, focus = null, opts = {}) {
+  const { sort = 'eta', showIdle = true, summaryEl = null } = opts;
   const inArea = (t) => !focus || focus.trucks.has(t.id);
-  const list = focus ? [...sim.trucks.filter(inArea), ...(focus.outside === 'hide' ? [] : sim.trucks.filter((t) => !inArea(t)))] : sim.trucks;
-  const html = list.map((t) => {
-    const [l1, l2] = etaLines(t, sim.time);
-    const pct = Math.min(100, (t.load / t.maxCapacity) * 100);
-    return `
-      <div class="truck-card ${t.status === 'blocked' ? 'blocked' : ''}${inArea(t) ? '' : ' outside'}" data-truck="${esc(t.id)}" title="Show trip details" style="--truck:${t.color}">
-        <div class="t-head"><span>${esc(t.name)}</span><span class="t-status">${t.status}${t.mode !== 'collect' ? ` · ${t.mode}` : ''}</span></div>
-        <div class="t-eta">${esc(l1)}</div>
-        <div class="t-sub">${esc(l2)}</div>
-        <div class="t-sub">queue: ${t.queue.length ? esc(t.queue.join(', ')) : '—'} · ${t.collected} collected</div>
-        <div class="loadbar ${pct >= 100 ? 'over' : ''}"><div style="width:${pct}%"></div></div>
-      </div>`;
-  }).join('') || '<p class="hint">No truck is working in this area.</p>';
+  const visible = sim.trucks.filter((t) => inArea(t) || !focus || focus.outside !== 'hide');
+  const order = sort === 'name'
+    ? (a, b) => (inArea(b) - inArea(a)) || byName(a, b)
+    : (a, b) => (inArea(b) - inArea(a)) || ((b.status === 'blocked') - (a.status === 'blocked')) || (nextAt(a) - nextAt(b)) || byName(a, b);
+  const groups = { active: [], idle: [], done: [] };
+  for (const t of visible) groups[groupOf(t)].push(t);
+  for (const g of Object.values(groups)) g.sort(order);
+
+  const section = (key, title, list, ranked) => list.length === 0 ? '' :
+    `<h4 class="t-group g-${key}">${title}<span>${list.length}</span></h4>` +
+    list.map((t, i) => truckCard(t, sim, ranked ? i + 1 : 0, !inArea(t))).join('');
+  let html = section('active', 'On the road', groups.active, true);
+  if (showIdle) html += section('idle', 'Waiting at the depot', groups.idle, false) + section('done', 'Finished', groups.done, false);
+  if (!html) html = `<p class="hint">${visible.length ? 'No truck is on the road right now.' : 'No truck is working in this area.'}</p>`;
   if (html !== el._html) { el.innerHTML = html; el._html = html; } // unchanged cards stay clickable
+
+  if (summaryEl) {
+    const blocked = groups.active.filter((t) => t.status === 'blocked').length;
+    const collected = visible.reduce((n, t) => n + t.collected, 0);
+    const chip = (cls, label, n) => `<span class="eta-chip ${cls}"><b>${n}</b> ${label}</span>`;
+    const s = chip('c-active', 'on the road', groups.active.length) +
+      (blocked ? chip('c-blocked', 'blocked', blocked) : '') +
+      chip('c-idle', 'waiting', groups.idle.length) +
+      chip('c-done', 'finished', groups.done.length) +
+      chip('c-bins', 'bins collected', collected);
+    if (s !== summaryEl._html) { summaryEl.innerHTML = s; summaryEl._html = s; }
+  }
 }
 
 const IMPORTANT = new Set(['event', 'handoff', 'pending', 'warning', 'info']);
@@ -76,16 +133,28 @@ export function renderTruckTable(table, sim) {
 
 export function renderEventTable(table, sim) {
   const upcoming = sim.events.upcoming();
+  const kindCell = (e) => {
+    const spec = INCIDENTS[e.cause] || INCIDENTS[e.type];
+    const group = spec ? spec.group : 'road';
+    return `<span class="ev-kind g-${group}">${incidentIcon(e)} ${esc(e.label || incidentLabel(e))}</span>`;
+  };
+  const whereOf = (e) => {
+    const spec = INCIDENTS[e.cause] || INCIDENTS[e.type];
+    if (spec && spec.group === 'bin') return 'a bin near a working truck';
+    if (spec && spec.group === 'truck') return 'a working truck';
+    if (e.near) return 'a road near a working truck';
+    return sim.world.edgeLabel(e.edge);
+  };
   const done = sim.eventLog.map((e) => `<tr>
-      <td>${e.clock}</td><td class="left">${e.type}</td><td class="left">${esc(e.edge)}</td><td class="left">${esc(e.description)}</td>
+      <td>${e.clock}</td><td class="left">${kindCell(e)}</td><td class="left">${esc(e.edge)}</td><td class="left">${esc(e.description)}</td>
       <td class="left">${e.rerouted.length ? esc(e.rerouted.join(', ')) : '—'}</td>
       <td class="left">${esc([...e.blocked.map((b) => `${b} blocked`), ...e.unblocked.map((b) => `${b} unblocked`)].join(', ') || '—')}</td>
       <td class="left">${e.source}</td></tr>`);
   const next = upcoming.slice(0, 8).map((e) => `<tr style="opacity:.5">
-      <td>${fmtClockLocal(e.time)}</td><td class="left">${e.type}</td><td class="left">${esc(sim.world.edgeLabel(e.edge))}</td>
+      <td>${fmtClockLocal(e.time)}</td><td class="left">${kindCell(e)}</td><td class="left">${esc(whereOf(e))}</td>
       <td class="left">scheduled${e.note ? ` — ${esc(e.note)}` : ''}</td><td class="left">—</td><td class="left">—</td><td class="left">${e.source}</td></tr>`);
   table.innerHTML = `
-    <thead><tr><th>Time</th><th class="left">Event</th><th class="left">Edge</th><th class="left">Effect</th>
+    <thead><tr><th>Time</th><th class="left">Event</th><th class="left">Where</th><th class="left">Effect</th>
       <th class="left">Rerouted trucks</th><th class="left">Blocked / unblocked</th><th class="left">Source</th></tr></thead>
     <tbody>${done.join('')}${next.join('')}${done.length + next.length === 0 ? '<tr><td colspan="7" class="left">No road events in this variant.</td></tr>' : ''}</tbody>`;
 }

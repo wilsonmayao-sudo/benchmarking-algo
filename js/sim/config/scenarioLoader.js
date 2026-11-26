@@ -24,6 +24,7 @@
  * so a broken config fails loudly before the simulation starts.
  */
 
+import { INCIDENTS, DEFAULT_INCIDENT_MIX, isIncident, incidentEvent } from '../events/incidents.js';
 import { Graph } from '../../core/graph.js';
 import { mulberry32, randInt, randRange, shuffle } from '../../core/rng.js';
 import { generateNetwork } from '../../data/networkGenerator.js';
@@ -45,8 +46,9 @@ export const DEFAULT_SETTINGS = {
 export const DEFAULT_TRUCK = { speed_kph: 25, max_capacity: 1000, current_load: 0 };
 
 const TRUCK_COLORS = [
-  '#38bdf8', '#f472b6', '#a78bfa', '#fb923c', '#2dd4bf', '#facc15', '#f87171',
-  '#4ade80', '#60a5fa', '#e879f9', '#fbbf24', '#34d399', '#c084fc', '#fda4af',
+  // Deep, saturated colours: they stay readable on the bright street map.
+  '#1d4ed8', '#be185d', '#6d28d9', '#c2410c', '#0f766e', '#a16207', '#b91c1c',
+  '#15803d', '#1e3a8a', '#a21caf', '#92400e', '#047857', '#7e22ce', '#0e7490',
 ];
 
 export class ScenarioError extends Error {
@@ -579,7 +581,7 @@ export const EVENT_TYPES = ['ROAD_CLOSURE', 'ROAD_REOPEN', 'TRAFFIC_DELAY'];
 
 export const DEFAULT_RANDOM_EVENTS = {
   window_s: [0, 3600],
-  types: { TRAFFIC_DELAY: 0.6, ROAD_CLOSURE: 0.4 },
+  types: DEFAULT_INCIDENT_MIX, // real-life incidents (js/sim/events/incidents.js)
   closure_duration_s: [300, 1200],
   delay_factor: [1.5, 3],
   delay_duration_s: [300, 1200],
@@ -593,16 +595,20 @@ export const DEFAULT_RANDOM_EVENTS = {
  */
 export function randomRoadEvent(rng, graph, r, time) {
   const types = r.types || DEFAULT_RANDOM_EVENTS.types;
-  const typeNames = Object.keys(types).filter((t) => EVENT_TYPES.includes(t) && t !== 'ROAD_REOPEN');
+  const typeNames = Object.keys(types).filter((t) => (EVENT_TYPES.includes(t) && t !== 'ROAD_REOPEN') || isIncident(t));
   const totalW = typeNames.reduce((s, t) => s + types[t], 0);
   let pickW = rng() * totalW;
   let type = typeNames[0];
   for (const t of typeNames) { pickW -= types[t]; if (pickW <= 0) { type = t; break; } }
   const edge = randInt(rng, graph.edgeCount);
   const at = typeof time === 'function' ? time() : time;
+  // Random events are moved next to a working truck when they happen (near: true).
+  if (isIncident(type)) {
+    return incidentEvent(type, { time: at, edge, draw: ([a, b]) => randRange(rng, a, b), pick: rng(), source: 'random' });
+  }
   if (type === 'ROAD_CLOSURE') {
     const [d0, d1] = r.closure_duration_s || DEFAULT_RANDOM_EVENTS.closure_duration_s;
-    return { time: at, type, edge, duration: Math.round(randRange(rng, d0, d1)), source: 'random', note: '' };
+    return { time: at, type, edge, duration: Math.round(randRange(rng, d0, d1)), source: 'random', note: '', near: true };
   }
   const [f0, f1] = r.delay_factor || DEFAULT_RANDOM_EVENTS.delay_factor;
   const [d0, d1] = r.delay_duration_s || DEFAULT_RANDOM_EVENTS.delay_duration_s;
@@ -610,7 +616,7 @@ export function randomRoadEvent(rng, graph, r, time) {
     time: at, type, edge,
     factor: Number(randRange(rng, f0, f1).toFixed(2)),
     duration: Math.round(randRange(rng, d0, d1)),
-    source: 'random', note: '',
+    source: 'random', note: '', near: true,
   };
 }
 
@@ -624,8 +630,24 @@ function buildEvents(eventsCfg, ctx) {
   const scheduled = Array.isArray(eventsCfg) ? eventsCfg : eventsCfg.scheduled || [];
   scheduled.forEach((ev, i) => {
     const where = `events.scheduled[${i}]`;
-    if (!EVENT_TYPES.includes(ev.type)) { problems.push(`${where}: unknown type "${ev.type}"`); return; }
+    if (!EVENT_TYPES.includes(ev.type) && !isIncident(ev.type)) { problems.push(`${where}: unknown type "${ev.type}"`); return; }
     if (!(ev.time_s >= 0)) { problems.push(`${where}: time_s must be ≥ 0`); return; }
+    if (isIncident(ev.type)) {
+      // Real-life incident. Road incidents need an edge, or "near": true to be placed next to
+      // a working truck; bin / truck incidents may name a bin / truck, or go to one near the work.
+      const spec = INCIDENTS[ev.type];
+      const extra = {};
+      if (ev.duration_s !== undefined) extra.duration = ev.duration_s;
+      if (ev.factor !== undefined) extra.factor = ev.factor;
+      if (ev.extra_s !== undefined) extra.extra = ev.extra_s;
+      if (ev.bin !== undefined) extra.bin = String(ev.bin);
+      if (ev.truck !== undefined) extra.truck = String(ev.truck);
+      let edge = -1;
+      if (spec.group === 'road' && ev.edge !== undefined) { edge = refs.edge(ev.edge, where); if (edge < 0) return; }
+      const near = spec.group !== 'road' || ev.edge === undefined;
+      out.push(incidentEvent(ev.type, { time: ev.time_s, edge, near, source: 'schedule', note: ev.note || '', extra }));
+      return;
+    }
     if (ev.type === 'TRAFFIC_DELAY' && !(ev.factor > 0)) { problems.push(`${where}: TRAFFIC_DELAY needs factor > 0`); return; }
     const edge = refs.edge(ev.edge, where);
     if (edge < 0) return;

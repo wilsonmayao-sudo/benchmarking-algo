@@ -37,7 +37,8 @@
 import { RoadState } from './routing/roadState.js';
 import { Router } from './routing/router.js';
 import { EventQueue, applyRoadEvent } from './events/eventSystem.js';
-import { createTruckState, rerouteOrigin, lockedArc, routeUsesEdge } from './fleet/truck.js';
+import { INCIDENTS, isStopIncident, incidentLabel } from './events/incidents.js';
+import { createTruckState, rerouteOrigin, lockedArc, routeUsesEdge, keepsOwnBins } from './fleet/truck.js';
 import { createBinState } from './fleet/bins.js';
 import { initialAssignment, handoff, assignPending } from './fleet/dispatcher.js';
 import { computeEta, plannedOrder, fmtClock } from './fleet/eta.js';
@@ -45,7 +46,7 @@ import { summarize } from './metrics.js';
 import { mulberry32 } from '../core/rng.js';
 import {
   routerFor, arcAllowed, note, planNextOnRoute, blockedReason, delayAfterPickup, delayAtBin, delayAtLandfill,
-  OUTSIDE_MSG, routeOrder, stopTime,
+  OUTSIDE_MSG, routeOrder, stopTime, hold, remainingPath,
 } from './fleet/routes.js';
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -70,6 +71,7 @@ export class Simulation {
     this.binsById = new Map(this.bins.map((b) => [b.id, b]));
     this.trucks = world.trucks.map(createTruckState);
     this.pending = [];       // bin ids waiting for a truck
+    this.roadCause = new Map(); // edge → real-life cause of its closure / delay (e.g. ROAD_ACCIDENT)
 
     this.routes = new Map(); // id → { id, name, color, truckIds, poly, area, router }
     this.truckDelays = true; // random delays for trucks on a route
@@ -137,7 +139,8 @@ export class Simulation {
    */
   injectEvent(ev) {
     if (this.finished) return null;
-    if (!Number.isInteger(ev.edge) || ev.edge < 0 || ev.edge >= this.graph.edgeCount) return null;
+    const placedLater = isStopIncident(ev.type) || ev.near; // goes next to a working truck
+    if (!placedLater && (!Number.isInteger(ev.edge) || ev.edge < 0 || ev.edge >= this.graph.edgeCount)) return null;
     if (ev.type === 'TRAFFIC_DELAY' && !(ev.factor > 0)) return null;
     const full = { note: '', source: 'manual', ...ev, time: this.time };
     this.world.events.push(full); // keeps summary().events in step with what was applied
@@ -157,6 +160,7 @@ export class Simulation {
   clearRoad(edge, source = 'manual') {
     if (this.finished || !Number.isInteger(edge) || edge < 0 || edge >= this.graph.edgeCount) return 0;
     this.events.removeWhere((ev) => ev.edge === edge && ev.source === 'auto');
+    this.roadCause.delete(edge);
     let applied = 0;
     if (this.road.isClosed(edge)) {
       this.injectEvent({ type: 'ROAD_REOPEN', edge, source, note: 'cleared from the map' });
@@ -188,8 +192,20 @@ export class Simulation {
   // =======================================================================
 
   handleEvent(ev) {
+    if (isStopIncident(ev.type)) { this.handleIncident(ev); return; }
     const { graph } = this;
+    if (ev.near) {
+      // Random incident: put it on a road a working truck is about to use.
+      const pick = ev.pick ?? (((ev.edge + 1) * 2654435761) >>> 0) / 2 ** 32;
+      const e = this.edgeNearTrucks(pick);
+      if (e >= 0) ev.edge = e;
+      ev.near = false;
+    }
+    if (!Number.isInteger(ev.edge) || ev.edge < 0 || ev.edge >= graph.edgeCount) return;
     const result = applyRoadEvent(ev, this.road, this.events);
+    if (ev.type === 'ROAD_REOPEN' || (ev.type === 'TRAFFIC_DELAY' && ev.isEnd)) this.roadCause.delete(ev.edge);
+    else if (result.changed && ev.cause) this.roadCause.set(ev.edge, ev.cause);
+    const label = incidentLabel(ev);
     const edgeName = this.world.edgeLabel(ev.edge);
     const rerouted = [];
     const blocked = [];
@@ -199,7 +215,7 @@ export class Simulation {
     if (result.changed) {
       this.inRoadEvent = true; // ETA changes from here on are delays, not changes of plan
       const endBefore = this.trucks.map((t) => (t.trip && t.status !== 'idle' ? t.trip.lastEnd : null));
-      const cause = ev.type === 'ROAD_CLOSURE' ? 'road closed' : 'heavy traffic';
+      const cause = ev.cause ? label.toLowerCase() : ev.type === 'ROAD_CLOSURE' ? 'road closed' : 'heavy traffic';
       // Which trucks must re-plan?
       //  • closure / extra delay: only trucks whose remaining route uses the road
       //  • reopen / delay cleared: every driving truck (a shorter route may exist now)
@@ -238,6 +254,8 @@ export class Simulation {
       time: ev.time,
       clock: fmtClock(ev.time),
       type: ev.type,
+      cause: ev.cause || null,
+      label,
       edge: edgeName,
       edgeIndex: ev.edge,
       source: ev.source,
@@ -248,11 +266,131 @@ export class Simulation {
     };
     this.eventLog.push(entry);
 
-    const parts = [`${ev.type} ${edgeName}: ${entry.description}`];
+    const parts = [`${ev.cause ? label : ev.type} ${edgeName}: ${entry.description}`];
     parts.push(rerouted.length ? `rerouted ${rerouted.join(', ')}` : 'no truck rerouted');
     if (blocked.length) parts.push(`BLOCKED ${blocked.join(', ')}`);
     if (unblocked.length) parts.push(`unblocked ${unblocked.join(', ')}`);
     this.log('event', parts.join(' · '), entry);
+  }
+
+  // =======================================================================
+  //  Real-life incidents near the trucks
+  // =======================================================================
+
+  /** A road (edge) that a working truck is about to drive on; -1 if there is none. */
+  edgeNearTrucks(pick) {
+    const { graph, road } = this;
+    const seen = new Set();
+    const cands = [];
+    const add = (a) => {
+      const e = graph.adjEdge[a];
+      if (!seen.has(e) && !road.isClosed(e)) { seen.add(e); cands.push(e); }
+    };
+    for (const truck of this.trucks) {
+      if (truck.status === 'idle') continue;
+      // skip the road it is on right now: it can not turn away from that one
+      for (let i = 1; i < Math.min(truck.arcs.length, 40); i++) add(truck.arcs[i]);
+      if (truck.routeId && truck.arcs.length < 10) {
+        try { for (const a of remainingPath(this, truck).slice(0, 30)) add(a); } catch { /* no route path */ }
+      }
+    }
+    if (cands.length === 0) {
+      // nobody is driving: a road next to a bin that still waits for a truck
+      for (const bin of this.bins) {
+        if (bin.state === 'collected' || bin.state === 'missed') continue;
+        for (let a = graph.adjStart[bin.node]; a < graph.adjStart[bin.node + 1]; a++) add(a);
+      }
+    }
+    return cands.length ? cands[Math.min(cands.length - 1, Math.floor(pick * cands.length))] : -1;
+  }
+
+  /** A bin among the next stops of a working truck (not the one being emptied right now). */
+  binNearTrucks(pick) {
+    const busy = (bin) => this.trucks.some((t) => t.status === 'servicing' && t.target?.binId === bin.id);
+    const open = (bin) => bin && bin.state !== 'collected' && bin.state !== 'missed' && !busy(bin);
+    let cands = [];
+    for (const truck of this.trucks) {
+      if (truck.status === 'idle') continue;
+      for (const id of truck.queue.slice(0, 3)) {
+        const b = this.binsById.get(id);
+        if (open(b) && !cands.includes(b)) cands.push(b);
+      }
+    }
+    if (cands.length === 0) cands = this.bins.filter(open);
+    return cands.length ? cands[Math.min(cands.length - 1, Math.floor(pick * cands.length))] : null;
+  }
+
+  /** A truck that is out working (driving or emptying a bin). */
+  truckNearWork(pick) {
+    const cands = this.trucks.filter((t) => t.status === 'driving' || t.status === 'servicing');
+    return cands.length ? cands[Math.min(cands.length - 1, Math.floor(pick * cands.length))] : null;
+  }
+
+  /** Bin and truck incidents (road incidents go through the road-event path). */
+  handleIncident(ev) {
+    const spec = INCIDENTS[ev.type];
+    const label = spec.label;
+    const pick = ev.pick ?? 0.5;
+    let where = '—';
+    let description = '';
+    this.metrics.eventsApplied++;
+    this.metrics.incidents = (this.metrics.incidents || 0) + 1;
+
+    if (spec.group === 'bin') {
+      const named = ev.bin !== undefined ? this.binsById.get(String(ev.bin)) : null;
+      const bin = named && named.state !== 'collected' && named.state !== 'missed' ? named : this.binNearTrucks(pick);
+      if (!bin) description = 'no bin left to affect';
+      else {
+        where = bin.name;
+        const owner = this.trucks.find((t) => t.id === bin.truckId) || null;
+        bin.incident = spec.short;
+        if (ev.type === 'BIN_MISSING') {
+          bin.state = 'missed';
+          bin.missReason = 'bin missing';
+          this.pending = this.pending.filter((id) => id !== bin.id);
+          if (owner && owner.target?.binId !== bin.id) { // a truck already on its way finds out on arrival
+            owner.queue = owner.queue.filter((id) => id !== bin.id);
+            this.refreshEta(owner);
+          }
+          description = `bin is gone (stolen or moved) and can not be collected${owner ? `; ${owner.name} skips it` : ''}`;
+        } else {
+          const extra = ev.extra ?? 0;
+          bin.extraTime = (bin.extraTime || 0) + extra;
+          if (ev.type === 'BIN_OVERFLOW') {
+            const f = ev.factor ?? 1.5;
+            bin.load = Math.round(bin.load * f);
+            bin.fill = 100;
+            description = `garbage piled around the bin: ${Math.round(bin.load)} kg (×${f}), +${Math.round(extra / 60)} min to load`;
+          } else if (ev.type === 'BIN_BLOCKED') {
+            description = `a parked vehicle blocks the bin: +${Math.round(extra / 60)} min at the stop`;
+          } else {
+            description = `bin is broken and loaded by hand: +${Math.round(extra / 60)} min at the stop`;
+          }
+          if (owner) this.refreshEta(owner);
+        }
+      }
+    } else {
+      const named = ev.truck !== undefined ? this.trucks.find((t) => t.id === String(ev.truck)) : null;
+      const truck = named && named.status !== 'idle' ? named : this.truckNearWork(pick);
+      if (!truck) description = 'no truck on the road';
+      else {
+        where = truck.name;
+        const seconds = ev.duration ?? 900;
+        hold(this, truck, seconds, label.toLowerCase());
+        truck.incident = { label, short: spec.short, icon: spec.icon, until: truck.holdUntil };
+        this.refreshEta(truck);
+        description = `stopped for repairs, about ${Math.round(seconds / 60)} min`;
+      }
+    }
+
+    const entry = {
+      time: ev.time, clock: fmtClock(ev.time), type: ev.type, cause: ev.type, label,
+      edge: where, edgeIndex: -1, source: ev.source,
+      description: description + (ev.note ? ` (${ev.note})` : ''),
+      rerouted: [], blocked: [], unblocked: [],
+    };
+    this.eventLog.push(entry);
+    this.log('event', `${label} — ${where}: ${entry.description}`, entry);
   }
 
   /**
@@ -345,6 +483,13 @@ export class Simulation {
       if (truck.load >= truck.maxCapacity || truck.load + next.load > truck.maxCapacity) {
         const why = truck.load >= truck.maxCapacity ? 'full' : `full (${Math.round(truck.load)}/${truck.maxCapacity} kg, next bin ${Math.round(next.load)} kg)`;
         truck.mode = 'full';
+        if (keepsOwnBins(truck, s) && next.load <= truck.maxCapacity) {
+          // Area truck: unload at the landfill, then come back and finish its own area.
+          this.log('info', `${truck.name} ${why} → to the landfill, then back for its ${truck.queue.length} remaining bin(s)`);
+          note(this, truck, `Full: unloading at the landfill, ${truck.queue.length} bin(s) left`);
+          this.routeTo(truck, { kind: 'disposal', node: this.world.disposal }, 'route');
+          return;
+        }
         const remaining = truck.queue.slice();
         const touched = handoff(this, truck, remaining, why);
         this.routeTo(truck, { kind: 'disposal', node: this.world.disposal }, 'route');
@@ -527,6 +672,16 @@ export class Simulation {
     }
     if (target.kind === 'bin') {
       const bin = this.binsById.get(target.binId);
+      if (bin.state === 'missed') { // the bin went missing while the truck was on its way
+        this.log('warning', `${truck.name} found no bin at ${bin.name} — skipped`);
+        note(this, truck, `${bin.name} was missing — skipped`);
+        truck.queue = truck.queue.filter((id) => id !== bin.id);
+        truck.target = null;
+        truck.pendingEtaCheck = null;
+        this.planNext(truck);
+        this.refreshEta(truck);
+        return;
+      }
       // STRICT RULE: never collect a bin of another route (or, on a route, a bin of none).
       if (bin.routeId !== truck.routeId) {
         this.log('warning', `${truck.name} — ${OUTSIDE_MSG}: ${bin.name}`);
@@ -544,7 +699,14 @@ export class Simulation {
       truck.pendingEtaCheck = null;
       truck.status = 'servicing';
       truck.busyUntil = clock + (truck.routeId ? stopTime(bin.node, truck.lastStop) + delayAtBin(this, truck, bin) : bin.serviceTime);
-      if (truck.routeId) this.refreshEta(truck);
+      if (bin.extraTime > 0) { // blocked / damaged / overflowing bin
+        truck.busyUntil += bin.extraTime;
+        truck.serviceProblem = `${bin.incident.toLowerCase()} bin`;
+        if (truck.trip) truck.trip.reason = truck.serviceProblem;
+        note(this, truck, `Delayed ${Math.round(bin.extraTime / 60)} min: ${bin.name} — ${bin.incident.toLowerCase()}`);
+        bin.extraTime = 0;
+      }
+      this.refreshEta(truck); // the next-stop countdown now runs to the end of this stop
     } else if (target.kind === 'disposal') {
       this.startUnloading(truck, clock);
     } else {

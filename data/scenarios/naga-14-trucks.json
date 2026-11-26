@@ -154,8 +154,19 @@
         3600
       ],
       "types": {
-        "TRAFFIC_DELAY": 0.6,
-        "ROAD_CLOSURE": 0.4
+        "HEAVY_TRAFFIC": 0.18,
+        "ROAD_ACCIDENT": 0.12,
+        "ROAD_WORKS": 0.07,
+        "STALLED_VEHICLE": 0.08,
+        "FLOODED_ROAD": 0.05,
+        "HEAVY_RAIN": 0.05,
+        "PROCESSION": 0.04,
+        "BIN_BLOCKED": 0.1,
+        "BIN_DAMAGED": 0.06,
+        "BIN_OVERFLOW": 0.09,
+        "BIN_MISSING": 0.06,
+        "TRUCK_BREAKDOWN": 0.04,
+        "FLAT_TIRE": 0.06
       },
       "closure_duration_s": [
         300,

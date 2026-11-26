@@ -20,7 +20,7 @@
  * changes (reroute, closure, delay, new assignment) — see Simulation.refreshEta().
  */
 
-import { busyRemaining, remainingRouteTime } from './truck.js';
+import { busyRemaining, remainingRouteTime, keepsOwnBins } from './truck.js';
 import { entryNode, routeOrder, routerFor, stopTime } from './routes.js';
 
 /**
@@ -139,26 +139,48 @@ export function computeEta(sim, truck) {
     return { nextAt, endAt: end, targetName, label: `${truck.name} → ${targetName}`, computedAt: now };
   }
 
-  if (target.kind === 'bin') {
-    const bin = binsById.get(target.binId);
-    // the truck is already committed to the target bin (it was checked to fit)
-    if (truck.status !== 'servicing') end += bin.serviceTime;
-    load += bin.load;
-    const rest = truck.queue.filter((id) => id !== target.binId);
-    for (const id of plannedOrder(graph, rest, binsById, at, s.visit_order)) {
-      const b = binsById.get(id);
-      if (load + b.load > truck.maxCapacity) break; // will be handed off at this point
-      end += legTime(at, b.node) + b.serviceTime;
+  // A standstill that starts after the current stop (breakdown while emptying a bin, …).
+  if (truck.status !== 'driving' && truck.holdUntil > end) end = truck.holdUntil;
+
+  const keeps = keepsOwnBins(truck, s);
+  const open = (id) => binsById.get(id).state !== 'missed'; // a missing bin is skipped
+  // The rest of the queue, in the order the truck will drive it (the same greedy order
+  // Simulation#planNext uses), with landfill trips whenever the next bin would not fit.
+  const collectRest = (ids) => {
+    let order = plannedOrder(graph, ids.filter(open), binsById, at, s.visit_order);
+    while (order.length > 0) {
+      const b = binsById.get(order[0]);
+      if (load + b.load > truck.maxCapacity) {
+        if (!keeps || b.load > truck.maxCapacity || load === 0) break; // handed off at this point
+        end += legTime(at, world.disposal) + s.unload_time_s; // unload, then back for the rest
+        at = world.disposal;
+        load = 0;
+        order = plannedOrder(graph, order, binsById, at, s.visit_order);
+        continue;
+      }
+      order.shift();
+      end += legTime(at, b.node) + b.serviceTime + (b.extraTime || 0);
       load += b.load;
       at = b.node;
     }
+  };
+
+  if (target.kind === 'bin') {
+    const bin = binsById.get(target.binId);
+    if (bin.state !== 'missed') {
+      // the truck is already committed to the target bin (it was checked to fit)
+      if (truck.status !== 'servicing') end += bin.serviceTime + (bin.extraTime || 0);
+      load += bin.load;
+    }
+    collectRest(truck.queue.filter((id) => id !== target.binId));
   } else if (target.kind === 'disposal') {
     end += truck.status === 'unloading' ? 0 : s.unload_time_s;
     load = 0;
+    collectRest(truck.queue); // an area truck comes back for the bins it kept
   }
 
   // final trip: unload if carrying anything, then back to the depot
-  if (target.kind !== 'disposal' && load > 0) {
+  if (load > 0) {
     end += legTime(at, world.disposal) + s.unload_time_s;
     at = world.disposal;
   }

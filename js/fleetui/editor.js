@@ -12,7 +12,10 @@ import { visibleBins } from '../sim/fleet/bins.js';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const LIMIT_KEY = 'ecoloop.fleet.binLimit';
+const LIMIT_KEY = 'ecoloop.fleet.binLimit.v2'; // v2: up to 80 bins (default 80) or all
+const DEFAULT_LIMIT = 80;
+/** 'Bins shown' value: 1–80, or 'all' (= every bin of the scenario). */
+const parseLimit = (v) => (v === 'all' ? Infinity : Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 80 ? Number(v) : DEFAULT_LIMIT);
 const DELAY_KEY = 'ecoloop.fleet.truckDelays';
 const EDIT_KEY = 'ecoloop.fleet.edits:';
 const TYPES = ['General', 'Recyclable', 'Organic'];
@@ -59,9 +62,9 @@ export class FleetEditor {
     this.redrawId = null;   // route being redrawn
     this.lastHtml = '';
 
-    const stored = Number(readStore(LIMIT_KEY, 10));
-    this.limit = Number.isInteger(stored) && stored >= 1 && stored <= 10 ? stored : 10;
-    $('binLimit').value = String(this.limit);
+    this.limit = parseLimit(readStore(LIMIT_KEY, DEFAULT_LIMIT));
+    $('binLimit').value = this.limit === Infinity ? 'all' : String(this.limit);
+    if ($('binLimit').value === '') { this.limit = DEFAULT_LIMIT; $('binLimit').value = String(DEFAULT_LIMIT); }
     clearOldRoutes();
     $('optTruckDelays').checked = readStore(DELAY_KEY, true) !== false;
     map.getVisibleBins = () => (map.sim ? map.sim.bins : []);
@@ -224,7 +227,7 @@ export class FleetEditor {
   _bind() {
     const { map } = this;
     $('binLimit').addEventListener('change', (e) => {
-      this.limit = Number(e.target.value);
+      this.limit = parseLimit(e.target.value);
       writeStore(LIMIT_KEY, e.target.value);
       if (this.sim) this.host.rebuild().then(() => this.say(`Now using ${this.sim.bins.length} bins. The run starts again.`, 'ok'));
     });
