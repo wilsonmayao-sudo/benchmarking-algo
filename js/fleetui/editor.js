@@ -89,7 +89,9 @@ export class FleetEditor {
     this._loadEdits(world);
     const { changed, deleted } = this.edits;
     const gone = new Set(deleted);
-    const left = world.bins.filter((b) => !gone.has(b.id));
+    // Testing area with "Run only this area's bins": the others do not take part.
+    this.areaTest = this.host.binFilter?.(world) || null;
+    const left = world.bins.filter((b) => !gone.has(b.id) && (!this.areaTest || this.areaTest({ ...b, ...changed[b.id] })));
     const ranked = visibleBins(left.map((b) => ({ id: b.id, fill: changed[b.id]?.fill ?? b.fill })), this.limit);
     const keep = new Set(ranked.map((b) => b.id));
     this.hiddenCount = left.length - keep.size;
@@ -112,7 +114,7 @@ export class FleetEditor {
       attempt(id, () => { updateBin(sim, id, c); });
       if (Number.isFinite(c.x)) attempt(id, () => moveBin(sim, id, c.x, c.y));
     }
-    for (const b of added) attempt(b.name, () => addBin(sim, b));
+    for (const b of added) if (!this.areaTest || this.areaTest(b)) attempt(b.name, () => addBin(sim, b));
     for (const r of routes) attempt(r.name, () => saveRoute(sim, r));
     const parts = [];
     if (added.length + deleted.length + Object.keys(changed).length) parts.push('edited bins');
@@ -162,10 +164,11 @@ export class FleetEditor {
 
   setMode(mode) {
     this.map.setEditMode(mode);
+    this.host.onMode?.(mode);
     $('btnAddBin').setAttribute('aria-pressed', String(mode === 'addBin'));
     $('btnAddBin').textContent = mode === 'addBin' ? '✓ Click the map (Esc to stop)' : '＋ Add Bin';
     $('btnCreateRoute').setAttribute('aria-pressed', String(mode === 'draw'));
-    $('drawTools').hidden = mode !== 'draw';
+    $('drawTools').hidden = mode !== 'draw' && mode !== 'drawZone';
     if (mode !== 'draw') this.redrawId = null;
   }
 
@@ -179,6 +182,11 @@ export class FleetEditor {
 
   _finishDraw() {
     const poly = this.map.draft.slice();
+    if (this.map.editMode === 'drawZone') { // a testing area, not a route
+      const wrong = this.host.onZoneDrawn(poly);
+      if (wrong) this.say(`⚠ ${wrong}`, 'err'); else { this.setMode('none'); this.say('Testing area saved.', 'ok'); }
+      return;
+    }
     const problem = areaProblem(this.sim, poly, this.redrawId);
     if (problem) { this.say(`⚠ ${problem}`, 'err'); return; }
     if (this.redrawId) {

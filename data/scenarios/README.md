@@ -71,6 +71,8 @@ delay it schedules the "delay cleared" event.
 | `generated` | `network: {type:"grid"\|"random", targetNodes, width, height}` | index `42` or `{"at":[fx,fy]}` | index `17` or `{"from":12,"to":13}` |
 | `geojson` | `path: "data/Naga_City_roads.geojson"` (GeoJSON / Overpass / CSV) | same as generated | same as generated |
 
+`test_areas` (optional, imported maps) fills the fleet page's *Testing area* list: `schedule` = a collection-schedule CSV (one area per `area_code`), `boundaries` = a GeoJSON of polygons with `kind` (`city`, `district` or `barangay`) and `name`.
+
 On imported maps a node can also be given as `{"lat": 13.6218, "lng": 123.1948}` (nearest node), and the depot / disposal may carry a `"name"` shown on the map.
 
 Places outside the road file can be linked with `map.connectors`: `[{ "to": [lng, lat], "name": "...", "maxspeed": 40 }]` adds one straight road from the nearest mapped road vertex to that point. Its length is the straight-line distance, so it is shorter than the real road; mention this wherever distances are reported.

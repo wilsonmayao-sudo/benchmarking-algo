@@ -653,8 +653,8 @@ Stops more than 300 m from the mapped roads are left out. The page lists how man
 
 [`data/scenarios/naga-14-trucks.json`](data/scenarios/naga-14-trucks.json) is the same city with random bins: the real Naga City road map (whole city from OpenStreetMap, 19 744 junctions, 21 643 roads) drawn over
 OpenStreetMap street tiles, 14 trucks that all start and end at the depot, 98 random bins and
-12 random road events. Depot and disposal use the EcoLoop WebApp coordinates: SWMO
-Motorpool & Dispatch Depot (13.6218, 123.1948) and SWMO - Sanitary Landfill, San Isidro
+12 random road events. The depot is the Solid Waste Management Office
+(13.618842, 123.1995803, from Google Maps); disposal uses the EcoLoop WebApp coordinates: SWMO - Sanitary Landfill, San Isidro
 (13.6212, 123.2576). The road file covers the landfill too, so disposal trips follow the real
 roads (the landfill is 19 m from the nearest mapped road). Pick the 3-truck sample from the scenario box.
 
@@ -676,6 +676,15 @@ internet; offline, the plain road network is drawn instead. Untick *Street map* 
 | *Add event now* bar → *Click a road* | Choose closure / delay / clear, then click roads on the map. Applied at the current simulated time, while playing or paused. Trucks whose route uses the road re-plan with A\* at once |
 | *🎲 Random event now* | One random closure or delay on a random road, right now |
 | *⛶ Full screen* | Map, both toolbars and Play/Pause fill the screen |
+
+**Testing areas.** The *Testing area* bar zooms the map to one area and shows only the fleet working
+there (the rest is dimmed or hidden; the truck list and run log follow). Choose a schedule area, a
+barangay, the city, or draw and save your own; step through them with ◀ ▶ and leave with *Full fleet map*.
+A truck counts when it is inside the area (not parked at the depot), still has bins there, or is the
+truck the schedule gives the area to. Schedule areas have no official boundary: they are drawn 150 m
+around their collection stops. Selecting an area changes only the view; *Run only this area's bins*
+restarts the run with that area's bins. Barangay boundaries (`data/naga_areas.geojson`): NAMRIA and PSA
+via OCHA COD-AB, CC BY-IGO. District polygons can be added to that file with `"kind": "district"`.
 
 Clearing a road also cancels its queued automatic follow-ups. Otherwise an old "delay
 cleared" would later divide the weight again and make the road faster than normal.

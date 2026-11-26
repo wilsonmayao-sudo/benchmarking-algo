@@ -175,7 +175,28 @@
       <span class="hint" id="editInfo" role="status"></span>
       <button id="btnUndoMove" class="small" type="button" hidden>Undo</button>
     </div>
+    <div class="stage-toolbar live-bar area-bar">
+      <strong class="live-title">Testing area</strong>
+      <select id="areaKind" aria-label="Kind of area"></select>
+      <button id="areaPrev" class="small" type="button" aria-label="Previous area" title="Previous area">&#9664;</button>
+      <select id="areaSelect" aria-label="Testing area"><option value="">Full fleet map</option></select>
+      <button id="areaNext" class="small" type="button" aria-label="Next area" title="Next area">&#9654;</button>
+      <button id="areaPick" class="small" type="button" aria-pressed="false">&#128433; Pick on map</button>
+      <button id="areaDraw" class="small" type="button" aria-pressed="false">&#9998; Draw area</button>
+      <button id="areaReset" class="small" type="button" disabled>&#x21BA; Full fleet map</button>
+      <span id="areaCustom" class="draw-tools" hidden>
+        <input id="areaName" type="text" maxlength="40" aria-label="Area name" />
+        <button id="areaDelete" class="small danger" type="button">Delete area</button>
+      </span>
+      <label class="field inline"><span>Outside</span>
+        <select id="areaOutside"><option value="dim">dimmed</option><option value="hide">hidden</option></select></label>
+      <label class="check"><input type="checkbox" id="optAreaBorders" checked /> Area borders</label>
+      <label class="check" title="Restarts the run with only the bins of the selected area"><input type="checkbox" id="optAreaBins" disabled /> Run only this area's bins (restarts)</label>
+      <strong id="areaStatus" class="bin-count"></strong>
+      <span class="hint" id="areaInfo" role="status"></span>
+    </div>
     <div class="view-card map-card">
+      <div class="map-zoom"><button id="mapZoomIn" type="button" aria-label="Zoom in">+</button><button id="mapZoomOut" type="button" aria-label="Zoom out">&minus;</button></div>
       <canvas id="fleetCanvas"></canvas>
       <div id="sidePanel" class="side-panel" role="region" aria-label="Details" hidden>
         <div class="side-head">
@@ -202,6 +223,7 @@
           <option value="important" selected>events, handoffs &amp; warnings</option>
           <option value="event">road events only</option>
         </select>
+        <label class="check inline-select" id="areaLogWrap" hidden><input type="checkbox" id="optAreaLog" checked /> selected area only</label>
       </h3>
       <div id="logList" class="log-list"></div>
     </div>

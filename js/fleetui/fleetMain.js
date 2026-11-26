@@ -10,6 +10,7 @@ import { fmtClock } from '../sim/fleet/eta.js';
 import { mulberry32 } from '../core/rng.js';
 import { FleetMapView } from './mapView.js';
 import { FleetEditor } from './editor.js';
+import { AreaPanel } from './areaPanel.js';
 import {
   renderTruckList, renderLog, renderMetrics, renderTruckTable,
   renderEventTable, renderRunsTable, renderLegend,
@@ -32,12 +33,26 @@ const state = {
 
 const map = new FleetMapView($('fleetCanvas'));
 
+// Testing areas: zoom to one, show only its fleet.
+const areas = new AreaPanel(map, {
+  rebuild: () => rebuild().catch(fail),
+  onChange: () => { if (state.sim) refreshPanels(); },
+  setMode: (mode) => {
+    if (mode !== 'none') { editor.host.onModeStart(); editor.closePanel(); }
+    editor.setMode(mode);
+  },
+  readText,
+});
+
 // Bins, routes and trip details.
 const editor = new FleetEditor(map, {
   rebuild: () => rebuild(),
   onChange: () => refreshPanels(),
   onModeStart: () => { if (map.pickMode) setPicking(false); }, // one map tool at a time
   isPlaying: () => state.playing,
+  binFilter: (world) => areas.binFilter(world),
+  onMode: (mode) => areas.modeChanged(mode),
+  onZoneDrawn: (poly) => areas.addDrawn(poly),
 });
 
 // ------------------------------------------------------------------ loading
@@ -105,6 +120,7 @@ async function rebuild() {
   if (state.eventSeed !== undefined) overrides.eventSeed = state.eventSeed;
 
   const world = await loadScenario(cfg, { readText, overrides });
+  await areas.prepare(cfg, world);
   editor.limitBins(world); // only the bins shown on the map take part
   state.sim = new Simulation(world);
   state.recorded = false;
@@ -118,6 +134,7 @@ async function rebuild() {
   const sameMap = map.setSimulation(state.sim);
   editor.attach(state.sim); // puts saved bins and routes back
   if (!sameMap) map.resetView(); // frame the bins and routes that were just put back, too
+  areas.attach(state.sim);
   renderLegend($('fleetLegend'), state.sim);
   const imp = world.binImport;
   const importLine = imp
@@ -179,8 +196,9 @@ function frame(ts) {
 
 function refreshPanels(full = false) {
   const sim = state.sim;
-  renderTruckList($('truckList'), sim);
-  renderLog($('logList'), sim.logEntries, $('logFilter').value);
+  areas.refresh();
+  renderTruckList($('truckList'), sim, map.focus);
+  renderLog($('logList'), sim.logEntries, $('logFilter').value, areas.logFilter());
   renderMetrics($('metricsTable'), sim.summary());
   renderTruckTable($('truckTable'), sim);
   editor.refresh();
@@ -354,7 +372,7 @@ const optionIds = { optBasemap: 'basemap', optPaths: 'paths', optEtaLabels: 'eta
 for (const [id, key] of Object.entries(optionIds)) {
   $(id).addEventListener('change', (e) => { map.options[key] = e.target.checked; map.render(); });
 }
-$('mapReset').addEventListener('click', () => map.resetView());
+$('mapReset').addEventListener('click', () => map.home());
 
 $('btnExportJson').addEventListener('click', () => {
   const sim = state.sim;
